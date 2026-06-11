@@ -1,0 +1,13 @@
+{
+  "name": "project-wizard",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Standalone multi-project PLAN wizard — collect what only a human can decide, then generate a /docs structure via docs-kit.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}

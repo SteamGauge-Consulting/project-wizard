@@ -1,0 +1,16 @@
+services:
+  project-wizard:
+    build: .
+    # If you publish an image instead of building on the server, swap `build` for:
+    #   image: ghcr.io/<owner>/project-wizard:latest
+    container_name: project-wizard
+    restart: unless-stopped
+    ports:
+      - "4500:4500"          # host:container — reach it at http://<server-ip>:4500
+    environment:
+      - PORT=4500
+    volumes:
+      - project-wizard-data:/app/data   # projects + generated trees persist here
+
+volumes:
+  project-wizard-data:
