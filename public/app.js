@@ -19,26 +19,60 @@
   }
   window.addEventListener('hashchange', route);
 
+  // Management links (Portainer + Traefik) — from /api/config when the wizard
+  // knows its HOST_IP, else derived from the nip.io hostname we're served on.
+  function hostLinks() {
+    return fetch('/api/config').then(function (r) { return r.json(); }).catch(function () { return {}; })
+      .then(function (cfg) {
+        cfg = cfg || {};
+        var portainer = cfg.portainerUrl, proxy = cfg.proxyUrl;
+        if (!portainer || !proxy) {
+          var m = String(location.hostname).match(/(\d+\.\d+\.\d+\.\d+)\.nip\.io$/) ||
+                  String(location.hostname).match(/^(\d+\.\d+\.\d+\.\d+)$/);
+          if (m) {
+            var ip = m[1];
+            if (!portainer) portainer = 'http://portainer.' + ip + '.nip.io/';
+            if (!proxy) proxy = 'http://' + ip + ':8080/dashboard/';
+          }
+        }
+        return { portainer: portainer, proxy: proxy };
+      });
+  }
+  function mgmtBarHtml(links) {
+    if (!links.portainer && !links.proxy) return '';
+    return (links.portainer ? '<a class="btn sm ghost" target="_blank" href="' + esc(links.portainer) + '" title="Portainer — container management">🐳 Containers</a>' : '') +
+           (links.proxy ? '<a class="btn sm ghost" target="_blank" href="' + esc(links.proxy) + '" title="Traefik — reverse-proxy dashboard">🔌 Proxy</a>' : '');
+  }
+  function fillMgmt() {
+    var slot = app.querySelector('#mgmt-links');
+    if (!slot) return;
+    hostLinks().then(function (links) { slot.innerHTML = mgmtBarHtml(links); });
+  }
+
   // ─── home ────────────────────────────────────────────────────────────────
   function home() {
     app.innerHTML = '<div class="loading">loading…</div>';
     fetch('/api/projects').then(function (r) { return r.json(); }).then(function (projects) {
       if (!projects.length) {
         app.innerHTML =
+          '<div class="home-head"><span></span><div id="mgmt-links" style="display:flex;gap:8px"></div></div>' +
           '<div class="empty"><h2>No projects yet</h2>' +
           '<p>Start one and the wizard walks you through the decisions only a human can make — then generates the project’s full /docs structure.</p>' +
           '<button class="btn primary" id="new-empty">+ New project</button>' +
           '<a class="hint" href="/demo-sequence.html">See a worked example → Sequence</a></div>';
         app.querySelector('#new-empty').addEventListener('click', newProject);
+        fillMgmt();
         return;
       }
       var tiles = projects.map(tileHtml).join('');
       app.innerHTML =
         '<div class="home-head"><h1>Projects<span class="count">' + projects.length + '</span></h1>' +
-        '<div style="display:flex;gap:12px;align-items:center"><a class="hint" href="/demo-sequence.html">Worked example</a>' +
+        '<div style="display:flex;gap:12px;align-items:center"><div id="mgmt-links" style="display:flex;gap:8px"></div>' +
+        '<a class="hint" href="/demo-sequence.html">Worked example</a>' +
         '<button class="btn primary" id="new-top">+ New project</button></div></div>' +
         '<div class="tiles">' + tiles +
         '<div class="tile new" id="new-tile"><div class="plus">+</div><div>New project</div></div></div>';
+      fillMgmt();
       app.querySelector('#new-top').addEventListener('click', newProject);
       app.querySelector('#new-tile').addEventListener('click', newProject);
       app.querySelectorAll('.tile[data-id]').forEach(function (el) {

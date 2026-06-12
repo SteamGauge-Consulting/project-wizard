@@ -318,6 +318,18 @@ app.get('/api/projects/:id/download-deploy', (req, res) => {
   zip.on('error', () => { if (!res.headersSent) res.status(500).end('zip unavailable'); cleanup(); });
 });
 
+// Host management links for the homepage. HOST_IP is injected by setup-host.sh
+// (the wizard's compose override). When unset — e.g. running locally — the
+// client falls back to parsing window.location for the nip.io IP.
+app.get('/api/config', (req, res) => {
+  const ip = process.env.HOST_IP || '';
+  res.json({
+    hostIp: ip || null,
+    portainerUrl: process.env.PORTAINER_URL || (ip ? `http://portainer.${ip}.nip.io/` : null),
+    proxyUrl: process.env.PROXY_URL || (ip ? `http://${ip}:8080/dashboard/` : null),
+  });
+});
+
 app.get('/healthz', (req, res) => res.json({ ok: true }));
 
 app.listen(PORT, () => {
