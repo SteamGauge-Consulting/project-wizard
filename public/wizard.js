@@ -54,7 +54,7 @@
   };
 
   var HINTS = {
-    requirements: 'One row per requirement. Priority is MoSCoW. Write the test in plain English — concrete and observable, naming an actor and an outcome — so the agent can turn it into a Given/When/Then acceptance criterion (e.g. “a new visitor completes checkout in under 3 minutes”, not “checkout works”).',
+    requirements: 'One row per requirement. Priority is MoSCoW. Describe what the user should EXPERIENCE, in plain English — concrete and observable, naming an actor and an outcome — not how to build it. Say “reordering feels smooth and works by touch”, not “350ms SortableJS drag with forceFallback”. The agent picks the libraries, timings, and patterns, and turns each line into a Given/When/Then.',
     decisions: 'Each row becomes an ADR. Lock only what you want to stop re-litigating.',
     milestones: '3–6 milestones in shipping order. “Done means” is the user-visible outcome.',
     risks: 'What could sink it, and any hard constraints (optional).',
@@ -280,7 +280,9 @@
         '<li>' + reqs.length + ' requirements · ' + decs.length + ' decisions · ' + miles.length + ' milestones</li>' +
         '<li>' + scal.length + ' non-functional / scale item' + (scal.length === 1 ? '' : 's') + ' — strong entries here sharpen the architecture the agent produces' +
         (scal.length === 0 ? ' <span style="color:var(--amber)">(none yet — the agent will still apply a baseline)</span>' : '') + '</li>' +
-        '</ul>' + warnHtml +
+        '</ul>' +
+        '<div class="warn" style="border-left-color:var(--accent)">You only owe <b>intent</b>. The agent fills in implementation (libraries, timings, patterns) and the usual things requirements forget — empty / first-run states, auth edge cases, accessibility, undo, backups, the timezone boundary, concurrency, notifications, and a pause mode — so you don’t have to list them.</div>' +
+        warnHtml +
         '<div style="margin-top:18px;display:flex;gap:10px;align-items:center">' +
         '<button class="btn primary" id="gen-btn">⚙ Generate doc structure</button>' +
         '<span id="gen-status" class="hint"></span></div></div>';
