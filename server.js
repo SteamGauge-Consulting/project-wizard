@@ -13,8 +13,11 @@
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const { spawn, execFile } = require('child_process');
 const storage = require('./lib/storage');
+const staticSite = require('./lib/static-site');
+const deployBundle = require('./lib/deploy-bundle');
 
 const app = express();
 const PORT = process.env.PORT || 4500;
@@ -65,8 +68,9 @@ function handoffOf(p) {
     '1. ' + d + '/REQUIREMENTS.md — requirements table (MoSCoW from my priorities), one Given/When/Then acceptance criterion per "how you’d test it" line, and the Not-building list verbatim.',
     '2. ' + d + '/adr/ — one ADR per locked decision (context, decision, trade-off accepted, revisit trigger). Update the locked-stack table wherever the docs show it.',
     '3. ' + d + '/milestones/ — one note per milestone with its "done means" outcome; update the Plan page + Mermaid Gantt to match.',
-    '4. Tracker: create milestones, one parent issue per phase, and sub-issues derived from requirements × milestones, each carrying its acceptance criteria; link them in the plan rows.',
+    '4. Tracker: create milestones, one parent issue per phase, and sub-issues derived from requirements × milestones, each carrying its acceptance criteria; link them in the plan rows. ⚠️ Only ever write to a tracker project DEDICATED to this app (empty, or already this app’s). If the configured Linear project/ID already holds unrelated issues, do NOT pollute it — create a new project for this app, or pause and ask the owner which project to use, before creating anything.',
     '5. Diagrams: update the architecture page (system diagram from the locked decisions) and any flow diagrams the requirements imply.',
+    '5b. Nav links: keep the shared nav’s structure and styling intact, but DO update the Reference / ADR / milestone link lists (in lib/docs-nav.js) to point at THIS app’s actual files — when you add or rename ADR/milestone/spec docs, the old donor links become dead and fail check-docs. Updating those per-file links is required, not a deviation; leave unrelated nav sections (e.g. product-mockup links) alone if the intake has no scope for them.',
     '6. Tests-as-requirements: emit the initial test list (one named test per AC) into the requirements doc.',
     '7. Risks: fold risks/constraints into the requirements and the review checklist.',
     '8. Non-functional coverage: produce a dedicated section (or a new ADR) for each of — observability (structured logging, metrics, tracing, dashboards, alerting), resilience patterns (timeouts, retries with backoff, circuit breakers, graceful degradation, idempotency), async/background processing (queues, workers, scheduled jobs), performance targets & load testing (SLIs/SLOs plus a load-test plan and tooling), secret management (injection, rotation, none in the image), cost controls (budgets, autoscaling ceilings, right-sizing), and security hardening (authn/z, input validation, dependency/CVE scanning, least privilege, TLS).',
@@ -212,6 +216,51 @@ app.get('/api/projects/:id/download', (req, res) => {
   zip.stdout.pipe(res);
   zip.stderr.on('data', () => {});
   zip.on('error', () => { if (!res.headersSent) res.status(500).end('zip unavailable'); });
+});
+
+// Standalone static site — flat HTML with relative links, opens from file://.
+app.get('/api/projects/:id/download-static', (req, res) => {
+  const p = storage.getProject(req.params.id);
+  if (!p) return res.status(404).json({ error: 'not found' });
+  const dir = storage.generatedDir(p.id);
+  if (!fs.existsSync(dir)) return res.status(404).json({ error: 'nothing generated' });
+  let outDir;
+  try { outDir = staticSite.build(dir).outDir; }
+  catch (e) { return res.status(500).json({ error: 'static build failed', detail: String(e.message || e).slice(0, 300) }); }
+  res.setHeader('Content-Type', 'application/zip');
+  res.setHeader('Content-Disposition', 'attachment; filename="' + deployBundle.slugify(p.name) + '-docs-static.zip"');
+  const zip = spawn('zip', ['-rq', '-', '.'], { cwd: outDir });
+  zip.stdout.pipe(res); zip.stderr.on('data', () => {});
+  zip.on('error', () => { if (!res.headersSent) res.status(500).end('zip unavailable'); });
+});
+
+// Docker deploy bundle — the package + Dockerfile/compose/deploy.sh prefilled
+// with the target host so `bash deploy.sh` ships it over SSH.
+app.get('/api/projects/:id/download-deploy', (req, res) => {
+  const p = storage.getProject(req.params.id);
+  if (!p) return res.status(404).json({ error: 'not found' });
+  const dir = storage.generatedDir(p.id);
+  if (!fs.existsSync(dir)) return res.status(404).json({ error: 'nothing generated' });
+  const q = req.query || {};
+  if (!q.host) return res.status(400).json({ error: 'host is required' });
+  let stage;
+  try {
+    stage = fs.mkdtempSync(path.join(os.tmpdir(), 'pwdeploy-'));
+    fs.cpSync(dir, stage, { recursive: true, filter: (src) => !/(^|[\\/])(_static|_deploy|node_modules|\.git)([\\/]|$)/.test(src) });
+    const f = deployBundle.files({ name: q.name || p.name, host: q.host, sshUser: q.user, sshPort: q.sshPort, port: q.port, hostname: q.hostname });
+    Object.keys(f).forEach((k) => { if (k !== '_meta') fs.writeFileSync(path.join(stage, k), f[k]); });
+    fs.chmodSync(path.join(stage, 'deploy.sh'), 0o755);
+  } catch (e) {
+    if (stage) try { fs.rmSync(stage, { recursive: true, force: true }); } catch (e2) {}
+    return res.status(500).json({ error: 'bundle failed', detail: String(e.message || e).slice(0, 300) });
+  }
+  res.setHeader('Content-Type', 'application/zip');
+  res.setHeader('Content-Disposition', 'attachment; filename="' + deployBundle.slugify(q.name || p.name) + '-deploy.zip"');
+  const zip = spawn('zip', ['-rq', '-', '.'], { cwd: stage });
+  zip.stdout.pipe(res); zip.stderr.on('data', () => {});
+  const cleanup = () => { try { fs.rmSync(stage, { recursive: true, force: true }); } catch (e) {} };
+  res.on('close', cleanup);
+  zip.on('error', () => { if (!res.headersSent) res.status(500).end('zip unavailable'); cleanup(); });
 });
 
 app.get('/healthz', (req, res) => res.json({ ok: true }));

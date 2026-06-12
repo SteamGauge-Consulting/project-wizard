@@ -125,3 +125,14 @@ table.rows td:last-child{width:34px;padding-right:0;}
 /* table cells: compact inputs + multi-line (ml) cells as small resizable textareas */
 table.rows input,table.rows select{font-size:13.5px;padding:7px 9px;}
 table.rows textarea.cell-ml{font-size:13.5px;padding:7px 9px;min-height:46px;line-height:1.45;resize:vertical;}
+
+/* export sheet */
+.exp-modal{max-width:480px;max-height:88vh;overflow:auto;}
+.exp-opt{display:flex;align-items:center;justify-content:space-between;gap:14px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:13px 14px;margin-bottom:10px;}
+.exp-opt.col{flex-direction:column;align-items:stretch;}
+.exp-opt b{font-size:14px;}
+.exp-opt .hint{margin-top:3px;}
+.dform{margin-top:6px;}
+.dform label{display:block;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim);margin:10px 0 4px;}
+.dform input{width:100%;}
+.dform .row2{display:flex;gap:10px;}.dform .row2>div{flex:1;}

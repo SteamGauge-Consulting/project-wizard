@@ -75,7 +75,7 @@
       ['product.success', 'What does success look like in 6 months? (measurable if you can)', 'Daily active members, retention, time-to-value…', 'area'],
       ['product.notBuilding', 'Explicitly NOT building (the “won’t” list)', 'One per line — the agent defends this boundary against scope creep.', 'area'],
     ] },
-    { title: 'Integrations', hint: 'The non-secret values docs-kit and the docs pages need. Blank is fine — the export marks it as a setup step. API keys are never collected here.', fields: [
+    { title: 'Integrations', hint: 'The non-secret values docs-kit and the docs pages need. Blank is fine — the export marks it as a setup step. API keys are never collected here. Point Linear at a NEW or dedicated project for this app — the agent creates this app’s milestones and issues there, and won’t touch an existing project that already has unrelated work.', fields: [
       ['integrations.githubRepoUrl', 'GitHub repo URL', 'https://github.com/me/acme', 'text'],
       ['integrations.linearWorkspaceUrl', 'Linear workspace URL', 'https://linear.app/acme', 'text'],
       ['integrations.linearProjectUrl', 'Linear project URL', 'https://linear.app/acme/project/launch-…', 'text'],
