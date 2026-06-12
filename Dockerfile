@@ -1,7 +1,8 @@
 FROM node:20-alpine
 
-# `zip` powers the "download .zip" of a generated doc structure.
-RUN apk add --no-cache zip
+# zip → the .zip downloads; openssh-client + rsync + sshpass → "Deploy now"
+# pushes a generated package to a Docker host over SSH from inside the container.
+RUN apk add --no-cache zip openssh-client rsync sshpass
 
 WORKDIR /app
 COPY package.json ./

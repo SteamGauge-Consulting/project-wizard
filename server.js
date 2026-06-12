@@ -218,6 +218,69 @@ app.get('/api/projects/:id/download', (req, res) => {
   zip.on('error', () => { if (!res.headersSent) res.status(500).end('zip unavailable'); });
 });
 
+// Stage a deploy bundle (package copy + Dockerfile/compose/deploy.sh) in a temp
+// dir and return its path. Caller cleans up.
+function stageDeploy(genDir, params) {
+  const stage = fs.mkdtempSync(path.join(os.tmpdir(), 'pwdeploy-'));
+  fs.cpSync(genDir, stage, { recursive: true, filter: (src) => !/(^|[\\/])(_static|_deploy|node_modules|\.git)([\\/]|$)/.test(src) });
+  const f = deployBundle.files(params);
+  Object.keys(f).forEach((k) => { if (k !== '_meta') fs.writeFileSync(path.join(stage, k), f[k]); });
+  fs.chmodSync(path.join(stage, 'deploy.sh'), 0o755);
+  return stage;
+}
+
+// Deploy now — push a generated package to a Docker host over SSH and bring it
+// up, all from inside this container (needs the SSH password; key auth isn't
+// available here). Returns the live URL + the remote build output.
+app.post('/api/projects/:id/deploy', (req, res) => {
+  const p = storage.getProject(req.params.id);
+  if (!p) return res.status(404).json({ error: 'not found' });
+  const dir = storage.generatedDir(p.id);
+  if (!fs.existsSync(dir)) return res.status(404).json({ error: 'nothing generated' });
+  const b = req.body || {};
+  if (!b.host) return res.status(400).json({ ok: false, error: 'host is required' });
+  if (!b.password) return res.status(400).json({ ok: false, error: 'SSH password is required — the wizard pushes from inside the container, so it needs the password (key auth isn’t wired here). You can still use “Download bundle” and run deploy.sh with your own key.' });
+
+  const params = { name: b.name || p.name, host: b.host, sshUser: b.user, sshPort: b.sshPort, port: b.port, hostname: b.hostname };
+  const name = deployBundle.slugify(params.name);
+  const user = (b.user || 'docker').trim();
+  const host = String(b.host).trim();
+  const sshPort = String(b.sshPort || '22').trim();
+  const target = user + '@' + host;
+  const meta = deployBundle.files(params)._meta;
+  const sshArgs = ['-o', 'StrictHostKeyChecking=accept-new', '-o', 'ConnectTimeout=15', '-p', sshPort];
+  const sshCmdStr = 'ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15 -p ' + sshPort;
+  const env = Object.assign({}, process.env, { SSHPASS: String(b.password) });
+
+  let stage;
+  try { stage = stageDeploy(dir, params); }
+  catch (e) { return res.status(500).json({ ok: false, error: 'stage failed: ' + String(e.message || e) }); }
+
+  const out = [];
+  const run = (cmd, args) => new Promise((resolve, reject) => {
+    const ps = spawn(cmd, args, { env, cwd: stage });
+    ps.stdout.on('data', (d) => out.push(d.toString()));
+    ps.stderr.on('data', (d) => out.push(d.toString()));
+    ps.on('error', reject);
+    ps.on('close', (code) => (code === 0 ? resolve() : reject(new Error(cmd + ' exited ' + code))));
+  });
+
+  (async () => {
+    try {
+      await run('sshpass', ['-e', 'ssh', ...sshArgs, target, 'mkdir -p ~/apps/' + name]);
+      await run('sshpass', ['-e', 'rsync', '-az', '--delete', '-e', sshCmdStr,
+        '--exclude', 'node_modules', '--exclude', '.git', '--exclude', '_static', '--exclude', 'deploy.sh',
+        './', target + ':apps/' + name + '/']);
+      await run('sshpass', ['-e', 'ssh', ...sshArgs, target, 'cd ~/apps/' + name + ' && docker compose up -d --build']);
+      res.json({ ok: true, url: meta.reachUrl, output: out.join('').slice(-6000) });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: String(e.message || e), output: out.join('').slice(-6000) });
+    } finally {
+      try { fs.rmSync(stage, { recursive: true, force: true }); } catch (e2) {}
+    }
+  })();
+});
+
 // Standalone static site — flat HTML with relative links, opens from file://.
 app.get('/api/projects/:id/download-static', (req, res) => {
   const p = storage.getProject(req.params.id);
@@ -244,16 +307,8 @@ app.get('/api/projects/:id/download-deploy', (req, res) => {
   const q = req.query || {};
   if (!q.host) return res.status(400).json({ error: 'host is required' });
   let stage;
-  try {
-    stage = fs.mkdtempSync(path.join(os.tmpdir(), 'pwdeploy-'));
-    fs.cpSync(dir, stage, { recursive: true, filter: (src) => !/(^|[\\/])(_static|_deploy|node_modules|\.git)([\\/]|$)/.test(src) });
-    const f = deployBundle.files({ name: q.name || p.name, host: q.host, sshUser: q.user, sshPort: q.sshPort, port: q.port, hostname: q.hostname });
-    Object.keys(f).forEach((k) => { if (k !== '_meta') fs.writeFileSync(path.join(stage, k), f[k]); });
-    fs.chmodSync(path.join(stage, 'deploy.sh'), 0o755);
-  } catch (e) {
-    if (stage) try { fs.rmSync(stage, { recursive: true, force: true }); } catch (e2) {}
-    return res.status(500).json({ error: 'bundle failed', detail: String(e.message || e).slice(0, 300) });
-  }
+  try { stage = stageDeploy(dir, { name: q.name || p.name, host: q.host, sshUser: q.user, sshPort: q.sshPort, port: q.port, hostname: q.hostname }); }
+  catch (e) { return res.status(500).json({ error: 'bundle failed', detail: String(e.message || e).slice(0, 300) }); }
   res.setHeader('Content-Type', 'application/zip');
   res.setHeader('Content-Disposition', 'attachment; filename="' + deployBundle.slugify(q.name || p.name) + '-deploy.zip"');
   const zip = spawn('zip', ['-rq', '-', '.'], { cwd: stage });

@@ -136,3 +136,4 @@ table.rows textarea.cell-ml{font-size:13.5px;padding:7px 9px;min-height:46px;lin
 .dform label{display:block;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim);margin:10px 0 4px;}
 .dform input{width:100%;}
 .dform .row2{display:flex;gap:10px;}.dform .row2>div{flex:1;}
+#d-out{display:none;max-height:200px;overflow:auto;background:#141416;border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:11px;line-height:1.45;margin-top:8px;white-space:pre-wrap;color:var(--mut);}

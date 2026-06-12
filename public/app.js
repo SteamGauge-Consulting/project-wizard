@@ -146,28 +146,49 @@
         '<div class="dform">' +
           '<label>SSH host / IP</label><input type="text" id="d-host" placeholder="10.10.0.208" />' +
           '<div class="row2"><div><label>SSH user</label><input type="text" id="d-user" value="docker" /></div><div><label>SSH port</label><input type="text" id="d-sshport" value="22" /></div></div>' +
+          '<label>SSH password</label><input type="password" id="d-pass" placeholder="needed so the wizard can push over SSH" />' +
           '<div class="row2"><div><label>App name</label><input type="text" id="d-name" placeholder="my-docs" /></div><div><label>Container port</label><input type="text" id="d-port" value="3000" /></div></div>' +
           '<label>Hostname for Traefik <span style="text-transform:none;letter-spacing:0">(optional)</span></label><input type="text" id="d-hostname" placeholder="docs.10.10.0.208.nip.io" />' +
           '<div class="hint">Leave blank to publish the container port directly instead of going through a proxy.</div>' +
-          '<button class="btn sm primary" id="d-go" style="margin-top:12px">⬇ Build deploy bundle</button>' +
+          '<div style="display:flex;gap:8px;margin-top:12px"><button class="btn sm primary" id="d-deploy">🚀 Deploy now</button><button class="btn sm" id="d-dl">⬇ Download bundle</button></div>' +
           '<div class="hint" id="d-note" style="margin-top:8px"></div>' +
+          '<pre id="d-out"></pre>' +
         '</div></div>' +
       '<div class="row"><button class="btn" id="exp-close">Close</button></div></div>';
     document.body.appendChild(bg);
     bg.addEventListener('click', function (e) { if (e.target === bg) bg.remove(); });
     bg.querySelector('#exp-close').addEventListener('click', function () { bg.remove(); });
-    bg.querySelector('#d-go').addEventListener('click', function () {
-      var host = bg.querySelector('#d-host').value.trim();
-      if (!host) { bg.querySelector('#d-host').focus(); return; }
-      var qs = new URLSearchParams({
-        host: host, user: bg.querySelector('#d-user').value.trim() || 'docker',
+    var note = bg.querySelector('#d-note'), outEl = bg.querySelector('#d-out');
+    function vals() {
+      return {
+        host: bg.querySelector('#d-host').value.trim(),
+        user: bg.querySelector('#d-user').value.trim() || 'docker',
         sshPort: bg.querySelector('#d-sshport').value.trim() || '22',
+        password: bg.querySelector('#d-pass').value,
         name: bg.querySelector('#d-name').value.trim() || '',
         port: bg.querySelector('#d-port').value.trim() || '3000',
         hostname: bg.querySelector('#d-hostname').value.trim(),
-      }).toString();
-      window.location.href = '/api/projects/' + id + '/download-deploy?' + qs;
-      bg.querySelector('#d-note').innerHTML = '✓ Downloaded. Unzip and run <code>bash deploy.sh</code> from any machine with SSH access to <b>' + esc(host) + '</b>.';
+      };
+    }
+    function showOut(t) { if (t) { outEl.textContent = t; outEl.style.display = 'block'; } }
+    bg.querySelector('#d-dl').addEventListener('click', function () {
+      var v = vals(); if (!v.host) { bg.querySelector('#d-host').focus(); return; }
+      var q = { host: v.host, user: v.user, sshPort: v.sshPort, name: v.name, port: v.port, hostname: v.hostname };
+      window.location.href = '/api/projects/' + id + '/download-deploy?' + new URLSearchParams(q).toString();
+      note.innerHTML = '✓ Downloaded — unzip and run <code>bash deploy.sh</code> from a machine with SSH access to <b>' + esc(v.host) + '</b>.';
+    });
+    bg.querySelector('#d-deploy').addEventListener('click', function () {
+      var v = vals();
+      if (!v.host) { bg.querySelector('#d-host').focus(); return; }
+      if (!v.password) { note.innerHTML = 'Enter the SSH password so the wizard can push — or use <b>Download bundle</b> and deploy with your own key.'; bg.querySelector('#d-pass').focus(); return; }
+      var btn = this; btn.disabled = true; outEl.style.display = 'none';
+      note.textContent = 'Deploying… (rsync + docker compose up — can take a minute on first build)';
+      api('/api/projects/' + id + '/deploy', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(v) }).then(function (res) {
+        btn.disabled = false;
+        var j = (res && res.j) || {};
+        if (j.ok) { note.innerHTML = '✓ Deployed — open <a href="' + esc(j.url) + '" target="_blank">' + esc(j.url) + '</a>'; showOut(j.output); }
+        else { note.innerHTML = '✗ ' + esc(j.error || 'deploy failed'); showOut(j.output); }
+      }).catch(function (e) { btn.disabled = false; note.textContent = '✗ ' + e.message; });
     });
   }
 
