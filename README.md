@@ -28,37 +28,70 @@ target host, and it does the rest — ending with the wizard live at
 **SSH password** (or a key). The host is any reachable **Ubuntu** box on your LAN
 — a fresh VM is fine; Docker need not be installed yet.
 
-**Paste this into a fresh Claude Code session** (fill in the blanks):
+### Recommended: Claude Code running *on* the Ubuntu box
+
+The cleanest setup (and the one these instructions assume) is to run **Claude Code
+on the Ubuntu host itself**, driven by **Claude Desktop** on your Windows PC over a
+remote connection. Because the agent lives on the host, the work **keeps running
+even after you shut the Windows PC down** — and there's no SSH hop to babysit.
+
+Install Claude Code on the box once (`curl -fsSL https://claude.ai/install.sh | bash`,
+or see the docs), connect Claude Desktop to it, then paste the prompt below.
+
+**Paste this into the Claude Code session on the host** (fill in the blanks):
+
+```text
+Set up the Project Wizard on this Docker host, end to end. You are running ON the
+target Ubuntu box, so run everything locally — no SSH.
+
+Repo: https://github.com/SteamGauge-Consulting/project-wizard
+GitHub token: <GH_TOKEN>        (classic PAT, `repo` scope — to clone the private repo)
+Host IP: <HOST_IP>              (optional — omit to use this box's primary LAN IP)
+
+Run this single command (it installs git, clones the repo with the token, strips
+the token back out of git config, then runs the setup):
+
+   sudo apt-get update -qq && sudo apt-get install -y -qq git \
+   && rm -rf ~/apps/project-wizard \
+   && git clone https://<GH_TOKEN>@github.com/SteamGauge-Consulting/project-wizard.git ~/apps/project-wizard \
+   && git -C ~/apps/project-wizard remote set-url origin https://github.com/SteamGauge-Consulting/project-wizard.git \
+   && bash ~/apps/project-wizard/scripts/setup-host.sh <HOST_IP>
+
+setup-host.sh installs Docker (+ log rotation), creates the `web` network, brings
+up a Traefik reverse proxy AND Portainer, then builds + starts the wizard behind
+the proxy. When it finishes, verify http://wizard.<HOST_IP>.nip.io/ returns 200
+and give me that URL.
+```
+
+### Alternative: drive it over SSH from your own machine
+
+If you'd rather run Claude Code on your laptop and reach the host over SSH (works
+from macOS, Linux, or Windows — Windows has `ssh` built in), use this prompt
+instead. Everything still executes ON the host inside one SSH session:
 
 ```text
 Set up the Project Wizard on my Docker host, end to end.
 
 Repo: https://github.com/SteamGauge-Consulting/project-wizard
-GitHub token: <GH_TOKEN>        (classic PAT, `repo` scope — only if the repo is private)
+GitHub token: <GH_TOKEN>        (classic PAT, `repo` scope — to clone the private repo)
 Host IP: <HOST_IP>
 SSH user: <USER>
-SSH password: <PASSWORD>        (or: SSH key at <PATH>)
+SSH auth: <key at <PATH>  OR  password: <PASSWORD>>
 
-Do this:
-1. Clone the repo locally. If a GitHub token was given, use it:
-   `git clone https://<GH_TOKEN>@github.com/SteamGauge-Consulting/project-wizard.git`
-   (otherwise clone with whatever GitHub access this session already has).
-2. Confirm SSH to the host: `ssh <USER>@<HOST_IP> 'echo ok'`
-   (use sshpass for the password, or my key; accept the host key on first connect).
-3. Copy the repo to ~/apps/project-wizard/ on the host with rsync, excluding
-   node_modules, .git, and data.
-4. On the host, run:  bash ~/apps/project-wizard/scripts/setup-host.sh <HOST_IP>
-   (it installs Docker if missing, sets log rotation, creates the `web` network,
-    brings up a Traefik reverse proxy, then builds + starts the wizard behind it).
-5. Verify http://wizard.<HOST_IP>.nip.io/ returns 200, then give me that URL.
-
-When done, the wizard homepage with the "New project" button should be live.
+1. SSH to the host. If a key path was given use `ssh -i <PATH> <USER>@<HOST_IP>`;
+   if a password was given, authenticate with it (accept the host key on first
+   connect). On Windows with password auth, run the ssh command interactively.
+2. On the host, run the same single command shown above (apt-get install git →
+   git clone with the token → strip the token → bash setup-host.sh <HOST_IP>).
+3. Verify http://wizard.<HOST_IP>.nip.io/ returns 200, then give me that URL.
 ```
 
-**What the host ends up running:** Docker + a Traefik reverse proxy + this wizard,
-all reachable by hostname via [nip.io] (no DNS setup). The wizard lands at
-`wizard.<HOST_IP>.nip.io`; every project a user later deploys from it lands at
-`<name>.<HOST_IP>.nip.io` on the same box.
+**What the host ends up running:** Docker + a Traefik reverse proxy + Portainer +
+this wizard, all reachable by hostname via [nip.io] (no DNS setup). The wizard
+lands at `wizard.<HOST_IP>.nip.io`; Portainer at `portainer.<HOST_IP>.nip.io`; the
+Traefik dashboard at `<HOST_IP>:8080`; and every project a user later deploys from
+the wizard lands at `<name>.<HOST_IP>.nip.io` on the same box. The wizard homepage
+also carries **🐳 Containers** (Portainer) and **🔌 Proxy** (Traefik) buttons.
 
 > **Repo access — it stays private; pick one:**
 > 1. **No key** — Claude clones with the GitHub access already in your session,
@@ -98,8 +131,10 @@ bash scripts/setup-host.sh        # uses the box's primary IP; or pass one expli
      The wizard rsyncs the package to the host and runs `docker compose up -d
      --build`, showing the live URL + build log.
 
-Watch containers come up at the **Traefik dashboard** (`http://<HOST_IP>:8080`),
-or add **Portainer** for a full GUI.
+Watch containers come up from the homepage buttons — **🐳 Containers** (Portainer,
+a full container GUI) and **🔌 Proxy** (the Traefik dashboard) — both deployed by
+`setup-host.sh` and reachable at `portainer.<HOST_IP>.nip.io` and
+`<HOST_IP>:8080`.
 
 ---
 
@@ -139,7 +174,7 @@ project-wizard/
 ├── Dockerfile             ← node:20-alpine + zip/openssh/rsync/sshpass
 ├── docker-compose.yml     ← portable base (publishes :4500); setup-host.sh adds a Traefik override
 ├── scripts/
-│   └── setup-host.sh      ← one-shot host setup (Docker + Traefik + wizard)
+│   └── setup-host.sh      ← one-shot host setup (Docker + Traefik + Portainer + wizard)
 ├── lib/
 │   ├── storage.js         ← atomic per-project JSON (data/projects/<id>.json)
 │   ├── docs-kit.js        ← vendored generator (the one-file /docs bootstrap)

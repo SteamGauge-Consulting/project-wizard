@@ -66,12 +66,41 @@ networks:
 YML
 ( cd ~/apps/proxy && $DOCKER compose up -d )
 
+# 4b. Portainer — container-management GUI at portainer.<HOST_IP>.nip.io ------
+mkdir -p ~/apps/portainer
+cat > ~/apps/portainer/docker-compose.yml <<YML
+services:
+  portainer:
+    image: portainer/portainer-ce:latest
+    container_name: portainer
+    restart: unless-stopped
+    networks: [web]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer_data:/data
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=web
+      - traefik.http.routers.portainer.rule=Host(\`portainer.${HOST_IP}.nip.io\`)
+      - traefik.http.routers.portainer.entrypoints=web
+      - traefik.http.services.portainer.loadbalancer.server.port=9000
+networks:
+  web:
+    external: true
+volumes:
+  portainer_data:
+YML
+( cd ~/apps/portainer && $DOCKER compose up -d )
+
 # 5. The wizard, behind Traefik at wizard.<HOST_IP>.nip.io -------------------
 #    A host-specific override (not committed) adds the proxy wiring; the base
 #    docker-compose.yml stays portable.
 cat > docker-compose.override.yml <<YML
 services:
   project-wizard:
+    environment:
+      - PORT=4500
+      - HOST_IP=${HOST_IP}
     networks: [default, web]
     labels:
       - traefik.enable=true
@@ -88,6 +117,7 @@ $DOCKER compose up -d --build
 echo
 echo "✓ Done."
 echo "  Project Wizard:     http://${WIZARD_HOST}/"
+echo "  Portainer:          http://portainer.${HOST_IP}.nip.io/"
 echo "  Traefik dashboard:  http://${HOST_IP}:8080/dashboard/"
 echo
 echo "Users open the wizard, build a project, then Export → Deploy to Docker"
