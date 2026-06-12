@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Worked example — Sequence · Project Wizard</title>
+<link rel="stylesheet" href="/styles.css" />
+<style>
+  .demo-intro{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px 22px;margin:6px 0 22px;}
+  .demo-intro h1{font-size:24px;margin:0 0 6px;}
+  .demo-intro p{color:var(--muted);margin:.4em 0;max-width:80ch;}
+  .page{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px 22px;margin:0 0 18px;}
+  .page > h2{font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);margin:0 0 4px;}
+  .page > .sub{color:var(--dim);font-size:13px;margin:0 0 14px;}
+  .field{margin:12px 0;}
+  .field .lab{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim);margin-bottom:3px;}
+  .field .val{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:9px 11px;font-size:14.5px;white-space:pre-wrap;}
+  .field .val.empty{color:var(--dim);font-style:italic;}
+  table.demo{border-collapse:collapse;width:100%;font-size:13.5px;margin-top:4px;}
+  table.demo th{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);text-align:left;padding:5px 10px 6px 0;font-weight:600;}
+  table.demo td{padding:6px 10px 6px 0;vertical-align:top;border-top:1px solid var(--line);}
+  .pri{font-size:11px;border:1px solid var(--line2);border-radius:999px;padding:2px 8px;white-space:nowrap;}
+  .actions{position:sticky;bottom:0;background:rgba(14,14,16,.94);backdrop-filter:blur(8px);border-top:1px solid var(--line);
+    padding:14px 0;margin-top:8px;display:flex;gap:12px;align-items:center;flex-wrap:wrap;}
+  .actions .note{color:var(--dim);font-size:12.5px;}
+</style>
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="#/">◆ Project&nbsp;Wizard</a>
+  <span class="brand-sub">worked example</span>
+</header>
+<main>
+  <div class="demo-intro">
+    <h1>Worked example — <span style="color:var(--accent)">Sequence</span></h1>
+    <p>This is the complete set of human inputs that plans a <b>blank copy of the Sequence app</b> — the
+    ADHD-friendly household task sequencer — page by page and field by field, exactly as you'd type them
+    into the wizard. It captures the product, the requirements behind every surface (editor, TV, login,
+    sequencing, recurring, PWA, push), the locked stack decisions, milestones, risks, and the
+    non-functional / scale needs.</p>
+    <p>Run it through the wizard and it generates the project's <code>/docs</code> structure plus a
+    <code>PLAN-INTAKE.json</code> and an AI handoff prompt — the package a coding agent turns into the
+    working app. (No household data is assumed; this plans a fresh, empty app.)</p>
+  </div>
+
+  <div id="pages"></div>
+
+  <div class="actions">
+    <button class="btn primary" id="create">⚙ Create this project in the wizard</button>
+    <button class="btn ghost" id="copy">Copy PLAN-INTAKE.json</button>
+    <span class="note" id="status"></span>
+  </div>
+</main>
+
+<!-- Single source of truth: these exact values render the demo AND seed the wizard for testing. -->
+<script type="application/json" id="demo-data">
+{
+  "name": "Sequence",
+  "product": {
+    "name": "Sequence",
+    "domain": "sequenceapp.life",
+    "oneliner": "An ADHD-friendly household task sequencer — the right things, in the right order, with no shame.",
+    "problem": "ADHD brains stall on open-ended to-do lists: too many choices, no inherent order, and guilt when things slip. A household needs one calm, glanceable “what's next” that sequences tasks into a clear order and quietly handles recurring chores — without nagging, streaks, or shame.",
+    "users": "Adults with ADHD who need an externalized, ordered “next thing” instead of an open list.\nHouseholds/families sharing chores who want one screen everyone can glance at.\nA household admin who sets up members, categories, and recurring chores.",
+    "success": "Every household member uses it daily; the TV display becomes the household's default “what's next”; recurring chores reliably reappear on cadence; there are no shame-inducing overdue pileups.",
+    "notBuilding": "No social/sharing features outside the household.\nNo gamification — points, streaks, or leaderboards (shame-adjacent).\nNo native mobile app (installable PWA only).\nNo third-party calendar sync in v1."
+  },
+  "integrations": {
+    "githubRepoUrl": "https://github.com/SteamGauge-Consulting/sequenceapp",
+    "linearWorkspaceUrl": "https://linear.app/steamgaugeconsulting",
+    "linearProjectUrl": "",
+    "linearProjectId": "",
+    "docsDir": "saas-launch"
+  },
+  "requirements": [
+    { "title": "Member login", "priority": "Must", "test": "From /login a household member picks their name, enters their PIN, and lands on the editor; a wrong PIN is rejected and no session is created." },
+    { "title": "Task editor", "priority": "Must", "test": "On / a logged-in member sees the household's tasks in sequence order and can add, edit, reorder, and complete a task, and every change persists across a page reload." },
+    { "title": "Explicit sequence order", "priority": "Must", "test": "Tasks render in an explicit, drag-reorderable order — the right things in the right order — not an unordered list, and a new order sticks after reload." },
+    { "title": "Complete without shame", "priority": "Must", "test": "Completing a task removes it from the active sequence with no overdue/streak/red-state shaming; nothing turns punitive." },
+    { "title": "TV display", "priority": "Must", "test": "On /tv the household sees a large, glanceable, auto-refreshing “what's next” view that needs no login on the shared screen." },
+    { "title": "Recurring tasks", "priority": "Must", "test": "A task set to recur reappears on its cadence after completion, honoring leadDays, with a same-day floor on short cadences." },
+    { "title": "Members & categories", "priority": "Should", "test": "An admin can add/remove household members (name, color, initials, PIN) and categories, and a task can be assigned to a member and a category." },
+    { "title": "Installable PWA", "priority": "Should", "test": "A member installs the app to their home screen and opens it offline-capable; the service worker serves the cached shell." },
+    { "title": "Web push reminders", "priority": "Should", "test": "A member subscribes to notifications and receives a reminder when a task is due, delivered via VAPID web push." }
+  ],
+  "decisions": [
+    { "concern": "Runtime", "choice": "Node.js + Express", "why": "Tiny and dependency-light; trivial to self-host on a home VM with no framework overhead for a small app." },
+    { "concern": "Storage", "choice": "Plain JSON files with atomic writes (no database)", "why": "Household-scale data; zero DB ops and trivially backed up. Revisit only if it goes multi-tenant." },
+    { "concern": "Frontend", "choice": "Server-served plain HTML/CSS/JS (no SPA framework)", "why": "Glanceable and fast with no build step; matches the calm, simple ethos." },
+    { "concern": "Auth", "choice": "bcrypt PIN per member + session cookie", "why": "Household trust model; short PINs are low-friction for ADHD users vs full passwords." },
+    { "concern": "Notifications", "choice": "Web Push (VAPID) + service worker", "why": "Native-feeling reminders with no app store; works on the household's existing phones." },
+    { "concern": "Deploy", "choice": "Containerized + hot-push to a self-hosted VM", "why": "~3-second iteration loop on a home box; container keeps it portable. Revisit with a managed host for the SaaS track." }
+  ],
+  "milestones": [
+    { "name": "M1 · Editor + storage", "done": "A logged-in member can add, order, and complete tasks that persist across reloads.", "target": "Week 1" },
+    { "name": "M2 · TV display", "done": "The household has a glanceable, auto-refreshing /tv “what's next” screen.", "target": "Week 2" },
+    { "name": "M3 · Recurring", "done": "Recurring tasks reappear on cadence with leadDays handled correctly.", "target": "Week 3" },
+    { "name": "M4 · PWA + push", "done": "Installable app delivering due-task push reminders.", "target": "Week 4" }
+  ],
+  "risks": [
+    { "risk": "Shame/punitive UX creeping in (overdue lists, streaks) undermines the ADHD-friendly goal.", "mitigation": "No red/overdue/streak UI; completing a task simply removes it from the sequence." },
+    { "risk": "JSON-file storage corruption on concurrent writes.", "mitigation": "Atomic write (temp file + rename); single-process server." },
+    { "risk": "leadDays > cadence edge cases on short-cadence recurring tasks.", "mitigation": "Same-day floor in the recurring-completion branch; UI prevents setting leadDays > cadence." }
+  ],
+  "scalability": [
+    { "area": "Availability", "target": "Always-on on the home VM; survives reboots and redeploys.", "adr": "systemd service with restart policy; cron auto-pull/redeploy." },
+    { "area": "Performance", "target": "TV refreshes within ~1s; editor actions feel instant on a phone.", "adr": "Static cached shell + small JSON payloads; no heavy client framework." },
+    { "area": "Observability", "target": "Server + deploy logs tailable; a visible deploy SHA confirms what's live.", "adr": "journald for the service, deploy.log, and a bottom-right deploy-SHA badge." },
+    { "area": "Backup / DR", "target": "No data loss across redeploys; restore from a snapshot.", "adr": "data/ kept out of the working-tree reset + VM snapshots; atomic JSON writes." },
+    { "area": "Security", "target": "Only household members reach the editor; secrets never land in git.", "adr": "bcrypt PIN + session; .deploy/ gitignored; the TV surface is read-only." },
+    { "area": "Scale", "target": "Single household (≤ ~10 members, hundreds of tasks); not multi-tenant in v1.", "adr": "JSON files are fine at this scale; multi-tenant is a separate SaaS track." }
+  ]
+}
+</script>
+
+<script>
+(function () {
+  'use strict';
+  var data = JSON.parse(document.getElementById('demo-data').textContent);
+  function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;'); }
+
+  var PRODUCT_FIELDS = [
+    ['name', 'App name'], ['domain', 'Production domain'], ['oneliner', 'One-liner — what is it?'],
+    ['problem', 'The problem it solves'], ['users', 'Target users — who exactly?'],
+    ['success', 'What does success look like in 6 months?'], ['notBuilding', 'Explicitly NOT building']
+  ];
+  var INTEG_FIELDS = [
+    ['githubRepoUrl', 'GitHub repo URL'], ['linearWorkspaceUrl', 'Linear workspace URL'],
+    ['linearProjectUrl', 'Linear project URL'], ['linearProjectId', 'Linear project ID'], ['docsDir', 'Docs directory name']
+  ];
+  var TABLE_PAGES = [
+    { key: 'requirements', title: 'Requirements', sub: 'Every surface and behavior as a testable requirement. The agent turns each plain-English test into a Given/When/Then.',
+      cols: [['title','Requirement'],['priority','Priority'],['test','How you’d test it']] },
+    { key: 'decisions', title: 'Decisions', sub: 'The locked stack — each row becomes an ADR.',
+      cols: [['concern','Concern'],['choice','Decision'],['why','Why (the trade-off)']] },
+    { key: 'milestones', title: 'Milestones', sub: 'Shipping order; “done means” is the user-visible outcome.',
+      cols: [['name','Milestone'],['done','Done means…'],['target','Target']] },
+    { key: 'risks', title: 'Risks', sub: 'What could sink it, and the hard constraints.',
+      cols: [['risk','Risk / constraint'],['mitigation','Mitigation / hard limit']] },
+    { key: 'scalability', title: 'Non-Functional & Scale', sub: 'The non-functional needs that shape architecture and ops — drives scaling ADRs.',
+      cols: [['area','Area'],['target','Target / requirement'],['adr','ADR / decision']] }
+  ];
+
+  var html = '';
+  function fieldRows(obj, fields) {
+    return fields.map(function (f) {
+      var v = (obj[f[0]] || '').trim();
+      return '<div class="field"><div class="lab">' + esc(f[1]) + '</div>' +
+        '<div class="val' + (v ? '' : ' empty') + '">' + (v ? esc(v) : '(left blank)') + '</div></div>';
+    }).join('');
+  }
+  html += '<div class="page"><h2>Page 1 · Product</h2><div class="sub">Plain language — the source of truth for scope.</div>' + fieldRows(data.product, PRODUCT_FIELDS) + '</div>';
+  html += '<div class="page"><h2>Page 2 · Integrations</h2><div class="sub">Non-secret values the generator needs. API keys are never entered here.</div>' + fieldRows(data.integrations, INTEG_FIELDS) + '</div>';
+
+  TABLE_PAGES.forEach(function (tp, i) {
+    var rows = (data[tp.key] || []);
+    var t = '<div class="page"><h2>Page ' + (i + 3) + ' · ' + esc(tp.title) + '</h2><div class="sub">' + esc(tp.sub) + '</div>' +
+      '<table class="demo"><thead><tr>' + tp.cols.map(function (c) { return '<th>' + esc(c[1]) + '</th>'; }).join('') + '</tr></thead><tbody>';
+    rows.forEach(function (r) {
+      t += '<tr>' + tp.cols.map(function (c) {
+        if (c[0] === 'priority') return '<td><span class="pri">' + esc(r[c[0]] || '') + '</span></td>';
+        return '<td>' + esc(r[c[0]] || '') + '</td>';
+      }).join('') + '</tr>';
+    });
+    t += '</tbody></table></div>';
+    html += t;
+  });
+  document.getElementById('pages').innerHTML = html;
+
+  // PLAN-INTAKE.json mirror of these answers (matches the server's intakeOf shape).
+  function intake() {
+    return {
+      version: 1, kind: 'plan-intake', project: data.name,
+      product: data.product, integrations: data.integrations,
+      requirements: data.requirements, decisions: data.decisions,
+      milestones: data.milestones, risks: data.risks, scalability: data.scalability
+    };
+  }
+
+  var status = document.getElementById('status');
+  document.getElementById('copy').addEventListener('click', function () {
+    navigator.clipboard.writeText(JSON.stringify(intake(), null, 2)).then(function () {
+      status.textContent = '✓ copied'; setTimeout(function () { status.textContent = ''; }, 1800);
+    });
+  });
+
+  // One-click: create a real project seeded with these answers, land in the wizard.
+  document.getElementById('create').addEventListener('click', function () {
+    var btn = this; btn.disabled = true; status.textContent = 'creating…';
+    fetch('/api/projects', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: data.name }) })
+      .then(function (r) { return r.json(); })
+      .then(function (proj) {
+        return fetch('/api/projects/' + proj.id, {
+          method: 'PUT', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ name: data.name, answers: {
+            product: data.product, integrations: data.integrations,
+            requirements: data.requirements, decisions: data.decisions,
+            milestones: data.milestones, risks: data.risks, scalability: data.scalability
+          } })
+        }).then(function () { location.href = '/#/p/' + proj.id + '/edit'; });
+      })
+      .catch(function (e) { status.textContent = 'failed: ' + e.message; btn.disabled = false; });
+  });
+})();
+</script>
+</body>
+</html>

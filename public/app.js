@@ -27,14 +27,16 @@
         app.innerHTML =
           '<div class="empty"><h2>No projects yet</h2>' +
           '<p>Start one and the wizard walks you through the decisions only a human can make — then generates the project’s full /docs structure.</p>' +
-          '<button class="btn primary" id="new-empty">+ New project</button></div>';
+          '<button class="btn primary" id="new-empty">+ New project</button>' +
+          '<a class="hint" href="/demo-sequence.html">See a worked example → Sequence</a></div>';
         app.querySelector('#new-empty').addEventListener('click', newProject);
         return;
       }
       var tiles = projects.map(tileHtml).join('');
       app.innerHTML =
         '<div class="home-head"><h1>Projects<span class="count">' + projects.length + '</span></h1>' +
-        '<button class="btn primary" id="new-top">+ New project</button></div>' +
+        '<div style="display:flex;gap:12px;align-items:center"><a class="hint" href="/demo-sequence.html">Worked example</a>' +
+        '<button class="btn primary" id="new-top">+ New project</button></div></div>' +
         '<div class="tiles">' + tiles +
         '<div class="tile new" id="new-tile"><div class="plus">+</div><div>New project</div></div></div>';
       app.querySelector('#new-top').addEventListener('click', newProject);

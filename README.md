@@ -68,12 +68,16 @@ project-wizard/
 
 ## Updating the generator
 
-`lib/docs-kit.js` is a copy of the repo-root `docs-kit.js`. When that's
-regenerated (`npm run build-docs-kit` in the parent repo), refresh the copy:
+`lib/docs-kit.js` is a copy of the Sequence repo's root `docs-kit.js` (the
+canonical generator). When that's regenerated there (`npm run build-docs-kit`),
+refresh the copy — adjust the path to wherever the Sequence repo lives:
 
 ```bash
-cp ../docs-kit.js lib/docs-kit.js
+cp ../Sequence/docs-kit.js lib/docs-kit.js
 ```
+
+The wizard's AI-handoff prompt is **not** in the kit — it's composed by
+`handoffOf()` in `server.js`, so refreshing the kit never clobbers it.
 
 ## Notes
 
