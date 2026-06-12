@@ -61,6 +61,104 @@
     scalability: 'Capture the non-functional needs that shape architecture and ops — availability, latency/throughput targets, data volume & growth, concurrency, observability, security, compliance, and disaster recovery. These drive the agent’s scaling decisions and ADRs; strong entries here produce a much stronger architecture.',
   };
 
+  // Archetypes — pick one to pre-fill the tables with sensible defaults for that
+  // kind of app, then edit only the deltas. Each seeds requirements/decisions/
+  // milestones/risks/scalability (intent-level; the agent fills implementation).
+  var ARCHETYPES = [
+    { key: 'household', icon: '🏡', name: 'Household / family coordinator', blurb: 'Shared chores, members, a glanceable display — calm and low-ops.',
+      product: { success: 'Every member uses it daily; the shared display becomes the default “what’s next”; no nagging or guilt.' },
+      requirements: [
+        { title: 'Member login', priority: 'Must', test: 'A household member picks their name and (if set) enters a PIN to get in; the shared display needs no login.' },
+        { title: 'One shared list everyone sees', priority: 'Must', test: 'Everyone sees the same up-to-date list; one person’s change shows for everyone.' },
+        { title: 'Assign and complete chores', priority: 'Must', test: 'A task can be assigned to a person or shared, and checking it off feels good and clears it with no shame.' },
+        { title: 'Recurring chores', priority: 'Should', test: 'A chore set to repeat comes back on schedule after it’s done.' },
+        { title: 'Glanceable shared display', priority: 'Should', test: 'A TV or tablet shows what’s next, large and readable from across the room, refreshing on its own.' } ],
+      decisions: [
+        { concern: 'Storage', choice: 'Simple file/JSON or a small managed DB', why: 'Household-scale data; keep ops near zero.' },
+        { concern: 'Auth', choice: 'Lightweight per-member PIN + session', why: 'Low friction for non-technical family members.' },
+        { concern: 'Hosting', choice: 'Single small container, self-hostable', why: 'Cheap, private, no per-seat cost.' } ],
+      milestones: [
+        { name: 'M1 · Core list', done: 'A member can add, see, and complete shared tasks.', target: 'Week 2' },
+        { name: 'M2 · Shared display', done: 'Glanceable display is live.', target: 'Week 3' },
+        { name: 'M3 · Recurring + reminders', done: 'Recurring chores and reminders work.', target: 'Week 4' } ],
+      risks: [
+        { risk: 'It starts to feel like nagging or shaming.', mitigation: 'No streaks, overdue-red, or guilt UI; completing just clears the task.' },
+        { risk: 'Only the tech-savvy parent ever sets it up.', mitigation: 'Dead-simple onboarding; sensible defaults; no config required.' } ],
+      scalability: [
+        { area: 'Availability', target: 'Always-on at home; survives reboots.', adr: 'Auto-restart + auto-update.' },
+        { area: 'Simplicity', target: 'One household; tens of items.', adr: 'No multi-tenant complexity in v1.' } ] },
+
+    { key: 'saas', icon: '🏢', name: 'B2B SaaS (multi-tenant)', blurb: 'Sign-up, teams, tenant isolation, billing — the classic paid product.',
+      requirements: [
+        { title: 'Sign up & subscribe', priority: 'Must', test: 'A new customer creates an account, starts a trial, upgrades to a paid plan, and reaches the product.' },
+        { title: 'Teams & roles', priority: 'Must', test: 'An owner invites teammates and assigns roles; each sees only their org’s data.' },
+        { title: 'Tenant isolation', priority: 'Must', test: 'A user from one org can never see or act on another org’s data.' },
+        { title: 'Billing & plan limits', priority: 'Should', test: 'Plan limits are enforced and a customer can manage billing self-serve.' },
+        { title: 'Admin audit log', priority: 'Should', test: 'Admins can review a log of significant actions with who and when.' } ],
+      decisions: [
+        { concern: 'Hosting', choice: 'Containerized on a managed platform', why: 'Scale with near-zero ops.' },
+        { concern: 'Database', choice: 'Managed Postgres', why: 'Relational integrity for multi-tenant; no DB ops.' },
+        { concern: 'Auth', choice: 'Managed auth provider', why: 'Offload security-critical auth; SSO later.' },
+        { concern: 'Payments', choice: 'Stripe (Checkout + Billing + Portal)', why: 'Trusted billing, tax, and self-serve.' } ],
+      milestones: [
+        { name: 'M1 · Foundation', done: 'Containerized app deployed, reachable over HTTPS.', target: 'Week 2' },
+        { name: 'M2 · Multi-tenant + auth', done: 'Sign up, log in, org isolation.', target: 'Week 4' },
+        { name: 'M3 · Billing', done: 'Trial → paid; plan limits enforced.', target: 'Week 6' },
+        { name: 'M4 · Launch-ready', done: 'Marketing site, monitoring, hardening.', target: 'Week 8' } ],
+      risks: [
+        { risk: 'A tenant-isolation bug leaks data across orgs.', mitigation: 'Scope every query by tenant at the data layer; tests for cross-tenant access.' },
+        { risk: 'Billing edge cases (failed payments, proration).', mitigation: 'Use the provider’s hosted billing; reconcile via webhooks.' } ],
+      scalability: [
+        { area: 'Availability', target: '99.9% uptime; graceful degradation.', adr: 'Multi-AZ, health checks, circuit breakers.' },
+        { area: 'Performance', target: 'p95 < 300ms at target load; load-tested.', adr: 'Caching + read replicas; load tests in CI.' },
+        { area: 'Observability', target: 'Logs, metrics, traces, alerting on SLOs.', adr: 'OpenTelemetry → managed backend.' },
+        { area: 'Security', target: 'Authn/z, least privilege, dependency scanning.', adr: 'Managed auth, scoped tokens, CVE scans.' } ] },
+
+    { key: 'internal', icon: '🛠️', name: 'Internal tool / admin dashboard', blurb: 'SSO, roles, CRUD, audit — a back-office system staff trust.',
+      requirements: [
+        { title: 'SSO login', priority: 'Must', test: 'Staff log in with the company SSO; no separate passwords.' },
+        { title: 'Role-based access', priority: 'Must', test: 'Each role sees and can do only what it’s permitted.' },
+        { title: 'CRUD on core records', priority: 'Must', test: 'Authorized staff can list, search, create, edit, and archive records.' },
+        { title: 'Audit log', priority: 'Must', test: 'Every change records who did what and when.' },
+        { title: 'Bulk actions & export', priority: 'Should', test: 'Staff can act on many records at once and export to CSV.' } ],
+      decisions: [
+        { concern: 'Auth', choice: 'Company SSO (OIDC/SAML)', why: 'No new credentials; central control.' },
+        { concern: 'Database', choice: 'Managed Postgres', why: 'Relational and audit-friendly.' },
+        { concern: 'Exposure', choice: 'Internal network / VPN-only', why: 'Not public; reduce attack surface.' } ],
+      milestones: [
+        { name: 'M1 · Read-only', done: 'SSO login + read-only views.', target: 'Week 2' },
+        { name: 'M2 · CRUD + roles', done: 'Create/edit with role permissions.', target: 'Week 4' },
+        { name: 'M3 · Audit + bulk', done: 'Audit log, bulk actions, export.', target: 'Week 6' } ],
+      risks: [
+        { risk: 'Over-broad permissions leak sensitive data.', mitigation: 'Least-privilege roles; audit log; periodic access review.' },
+        { risk: 'It becomes a shadow system of record.', mitigation: 'Define the source of truth and clear sync/export boundaries.' } ],
+      scalability: [
+        { area: 'Security', target: 'Least privilege + full audit.', adr: 'RBAC + immutable audit log.' },
+        { area: 'Availability', target: 'Business-hours reliability.', adr: 'Managed host + backups.' } ] },
+
+    { key: 'consumer', icon: '📱', name: 'Consumer app / installable PWA', blurb: 'Fast onboarding, offline core, push — an app-like web product.',
+      requirements: [
+        { title: 'Fast onboarding', priority: 'Must', test: 'A first-time user is doing the core thing within a minute, with no forced signup wall.' },
+        { title: 'Core loop works offline', priority: 'Should', test: 'The main action works without a connection and syncs when back online.' },
+        { title: 'Installable to home screen', priority: 'Should', test: 'The app installs as a PWA and launches full-screen.' },
+        { title: 'Opt-in push re-engagement', priority: 'Should', test: 'Users can opt into notifications and get timely, non-spammy nudges.' },
+        { title: 'Fast, accessible UI', priority: 'Must', test: 'The UI is fast and touch-friendly, usable with a screen reader and with good contrast.' } ],
+      decisions: [
+        { concern: 'Frontend', choice: 'Installable, offline-capable PWA', why: 'App-like without an app store.' },
+        { concern: 'Storage', choice: 'Local-first + sync to a small backend', why: 'Instant UX; works offline.' },
+        { concern: 'Auth', choice: 'Passwordless / social login', why: 'Lowest friction for consumers.' } ],
+      milestones: [
+        { name: 'M1 · Core loop', done: 'Core loop on web, mobile-first.', target: 'Week 2' },
+        { name: 'M2 · Offline + install', done: 'Works offline and installs to home screen.', target: 'Week 4' },
+        { name: 'M3 · Accounts + push', done: 'Accounts and opt-in notifications.', target: 'Week 6' } ],
+      risks: [
+        { risk: 'Retention is low after first use.', mitigation: 'Nail the first-minute value; opt-in nudges, not spam.' },
+        { risk: 'Offline sync conflicts.', mitigation: 'Last-write-wins or CRDTs for core data; clear conflict UX.' } ],
+      scalability: [
+        { area: 'Performance', target: 'Instant interactions; fast p95 on mid-range phones.', adr: 'Local-first + small payloads.' },
+        { area: 'Availability', target: 'Works offline; degrades gracefully.', adr: 'Service worker + background sync.' } ] },
+  ];
+
   var SCALAR_STEPS = [
     { title: 'Product', hint: 'Plain language. The agent uses this as the source of truth for scope — if it isn’t written here, it isn’t a requirement.', fields: [
       ['product.name', 'App name', 'Acme', 'text'],
@@ -83,6 +181,7 @@
   // Tables render in object order: requirements, decisions, milestones, risks,
   // then scalability (Non-Functional & Scale) — placed after Risks and before Generate.
   var STEP_DEFS = [].concat(
+    [{ kind: 'archetype', title: 'Start' }],
     SCALAR_STEPS.map(function (s) { return { kind: 'scalar', title: s.title, def: s }; }),
     Object.keys(TABLES).map(function (t) { return { kind: 'table', title: TABLES[t].title || cap(t), key: t }; }),
     [{ kind: 'generate', title: 'Generate' }]
@@ -163,9 +262,46 @@
     }
 
     function renderStep(def) {
+      if (def.kind === 'archetype') return renderArchetype();
       if (def.kind === 'scalar') return renderScalar(def.def);
       if (def.kind === 'table') return renderTable(def.key);
       return renderGenerate();
+    }
+
+    function renderArchetype() {
+      var sel = answers._archetype || '';
+      var tiles = ARCHETYPES.map(function (a) {
+        return '<div class="arch-tile' + (sel === a.key ? ' on' : '') + '" data-arch="' + a.key + '">' +
+          '<div class="arch-ico">' + a.icon + '</div><div class="arch-name">' + a.name + '</div>' +
+          '<div class="arch-blurb">' + a.blurb + '</div></div>';
+      }).join('');
+      bodyEl.innerHTML = '<div class="step on"><h2>Start from a template</h2>' +
+        '<p class="stephint">Pick the closest kind of app and the wizard pre-fills requirements, decisions, milestones, risks, and non-functional defaults — then you just edit the deltas. Or start blank. You can change or clear any of it later.</p>' +
+        '<div class="arch-grid">' + tiles +
+        '<div class="arch-tile' + (sel === '' ? ' on' : '') + '" data-arch=""><div class="arch-ico">✦</div><div class="arch-name">Blank</div><div class="arch-blurb">Start from scratch and fill everything in yourself.</div></div>' +
+        '</div></div>';
+      bodyEl.querySelectorAll('[data-arch]').forEach(function (el) {
+        el.addEventListener('click', function () { applyArchetype(el.getAttribute('data-arch')); go(cur + 1); });
+      });
+    }
+
+    function applyArchetype(key) {
+      var a = key ? null : { key: '' };
+      ARCHETYPES.forEach(function (x) { if (x.key === key) a = x; });
+      var tableKeys = ['requirements', 'decisions', 'milestones', 'risks', 'scalability'];
+      var hasData = tableKeys.some(function (t) { return (answers[t] || []).some(function (r) { return !rowEmpty(t, r); }); });
+      if (hasData && answers._archetype !== key &&
+          !window.confirm('Replace your current entries with this starting point?')) return;
+      answers._archetype = key;
+      if (a && a.requirements) {
+        tableKeys.forEach(function (t) {
+          if (a[t]) answers[t] = a[t].map(function (r) { return Object.assign(emptyRow(t), r); });
+        });
+        if (a.product) Object.keys(a.product).forEach(function (k) { if (!answers.product[k]) answers.product[k] = a.product[k]; });
+      } else if (!key) {
+        // Blank — leave whatever's there (don't wipe edits).
+      }
+      scheduleSave();
     }
 
     function renderScalar(s) {
