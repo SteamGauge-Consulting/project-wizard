@@ -121,3 +121,7 @@ table.rows td:last-child{width:34px;padding-right:0;}
 .toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:var(--panel2);border:1px solid var(--line2);
   border-radius:10px;padding:10px 18px;font-size:13.5px;z-index:200;box-shadow:0 10px 30px rgba(0,0,0,.5);}
 .toast.err{border-color:var(--red);color:var(--red);}
+
+/* table cells: compact inputs + multi-line (ml) cells as small resizable textareas */
+table.rows input,table.rows select{font-size:13.5px;padding:7px 9px;}
+table.rows textarea.cell-ml{font-size:13.5px;padding:7px 9px;min-height:46px;line-height:1.45;resize:vertical;}

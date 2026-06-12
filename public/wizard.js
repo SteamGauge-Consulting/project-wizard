@@ -3,26 +3,28 @@
 (function () {
   'use strict';
 
+  // `ml: true` = detailed-text column → renders as a multi-line textarea.
+  // Title / short-label / select columns stay single-line.
   var TABLES = {
     requirements: { label: 'requirement', cols: [
-      { k: 'title', th: 'Requirement', ph: 'Users can sign up and pay', w: '30%' },
+      { k: 'title', th: 'Requirement', ph: 'Users can sign up and pay', w: '28%' },
       { k: 'priority', th: 'Priority', sel: ['Must', 'Should', 'May', 'Won’t'], w: '12%' },
-      { k: 'test', th: 'How you’d test it (plain English)', ph: 'A new visitor finishes checkout in under 3 minutes', w: '58%' }] },
+      { k: 'test', th: 'How you’d test it (plain English)', ph: 'A new visitor finishes checkout in under 3 minutes', w: '60%', ml: true }] },
     decisions: { label: 'decision', cols: [
-      { k: 'concern', th: 'Concern', ph: 'Database', w: '22%' },
-      { k: 'choice', th: 'Decision', ph: 'Managed Postgres (Neon)', w: '30%' },
-      { k: 'why', th: 'Why (the trade-off you accept)', ph: 'Zero ops; vendor lock-in acceptable', w: '48%' }] },
+      { k: 'concern', th: 'Concern', ph: 'Database', w: '20%' },
+      { k: 'choice', th: 'Decision', ph: 'Managed Postgres (Neon)', w: '28%' },
+      { k: 'why', th: 'Why (the trade-off you accept)', ph: 'Zero ops; vendor lock-in acceptable', w: '52%', ml: true }] },
     milestones: { label: 'milestone', cols: [
-      { k: 'name', th: 'Milestone', ph: 'M1 · Foundation', w: '26%' },
-      { k: 'done', th: 'Done means…', ph: 'App deployed, reachable over HTTPS', w: '52%' },
+      { k: 'name', th: 'Milestone', ph: 'M1 · Foundation', w: '24%' },
+      { k: 'done', th: 'Done means…', ph: 'App deployed, reachable over HTTPS', w: '54%', ml: true },
       { k: 'target', th: 'Target', ph: 'Week 2', w: '22%' }] },
     risks: { label: 'risk', cols: [
-      { k: 'risk', th: 'Risk / constraint', ph: 'Sales-tax exposure', w: '50%' },
-      { k: 'mitigation', th: 'Mitigation / hard limit', ph: 'Launch US + Canada only', w: '50%' }] },
+      { k: 'risk', th: 'Risk / constraint', ph: 'Sales-tax exposure across regions', w: '50%', ml: true },
+      { k: 'mitigation', th: 'Mitigation / hard limit', ph: 'Launch US + Canada only; use a tax provider', w: '50%', ml: true }] },
     scalability: { label: 'scalability item', title: 'Non-Functional & Scale', cols: [
-      { k: 'area', th: 'Area', ph: 'Availability', w: '24%' },
-      { k: 'target', th: 'Target / requirement', ph: '99.9% uptime; p95 API < 200ms at 10k req/min', w: '50%' },
-      { k: 'adr', th: 'ADR / decision', ph: 'Multi-AZ, autoscaling workers, read replicas', w: '26%' }] },
+      { k: 'area', th: 'Area', ph: 'Availability', w: '22%' },
+      { k: 'target', th: 'Target / requirement', ph: '99.9% uptime; p95 API < 200ms at 10k req/min', w: '46%', ml: true },
+      { k: 'adr', th: 'ADR / decision', ph: 'Multi-AZ, autoscaling workers, read replicas', w: '32%', ml: true }] },
   };
 
   // Strong starter rows for the "Load examples" button on each table.
@@ -215,6 +217,8 @@
             html += '<select data-i="' + i + '" data-c="' + c.k + '">';
             c.sel.forEach(function (o) { html += '<option' + (row[c.k] === o ? ' selected' : '') + '>' + o + '</option>'; });
             html += '</select>';
+          } else if (c.ml) {
+            html += '<textarea class="cell-ml" data-i="' + i + '" data-c="' + c.k + '" rows="2" placeholder="' + esc(c.ph) + '">' + esc(row[c.k]) + '</textarea>';
           } else {
             html += '<input type="text" data-i="' + i + '" data-c="' + c.k + '" value="' + esc(row[c.k]) + '" placeholder="' + esc(c.ph) + '" />';
           }
@@ -227,7 +231,7 @@
         '<button class="add" data-add="1">+ add ' + spec.label + '</button>' +
         '<button class="add" data-examples="1">✦ Load examples</button></div>';
       host.innerHTML = html;
-      host.querySelectorAll('input,select').forEach(function (el) {
+      host.querySelectorAll('input,select,textarea').forEach(function (el) {
         el.addEventListener('input', function () { answers[t][+el.getAttribute('data-i')][el.getAttribute('data-c')] = el.value; scheduleSave(); });
       });
       host.querySelectorAll('[data-del]').forEach(function (b) {
