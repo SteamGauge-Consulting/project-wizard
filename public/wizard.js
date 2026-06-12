@@ -62,14 +62,16 @@
   };
 
   var SCALAR_STEPS = [
-    { title: 'Product', hint: 'Plain language. The agent uses this as the source of truth for scope — if it isn’t written here, it isn’t a requirement.', fields: [
+    { title: 'Product', hint: 'Plain language, specific to YOUR product — this is the source of truth for scope. Describe the one you’re building, not a generic app: the sharper and more particular you are here, the better the plan. There are no templates — these questions are meant to pull out what makes your product itself.', fields: [
       ['product.name', 'App name', 'Acme', 'text'],
       ['product.domain', 'Production domain', 'acme.app', 'text'],
-      ['product.oneliner', 'One-liner — what is it?', 'A privacy-first time tracker for freelancers', 'text'],
-      ['product.problem', 'The problem it solves (2–4 sentences)', 'Who hurts today, how, and why existing tools don’t fix it.', 'area'],
-      ['product.users', 'Target users — who exactly?', 'One line per user type: who they are, what they need.', 'area'],
-      ['product.success', 'What does success look like in 6 months?', 'Measurable if possible.', 'area'],
-      ['product.notBuilding', 'Explicitly NOT building (the “won’t” list)', 'One per line.', 'area'],
+      ['product.oneliner', 'One-liner — what is it, in your own words?', 'A calm, ordered to-do list for ADHD households', 'text'],
+      ['product.problem', 'The problem — who hurts today, how, and why their current options fail them', 'Be specific about the pain and why the obvious alternatives don’t solve it.', 'area'],
+      ['product.users', 'Who exactly is it for — and what do they need that others don’t?', 'One line per user type: who they are and the unmet need.', 'area'],
+      ['product.differentiator', 'What makes it unmistakably better than how they solve this today?', 'The one thing that, if you nail it, makes people switch — the heart of the product.', 'area'],
+      ['product.experience', 'What should using it FEEL like? (the experience bar)', 'e.g. “calm and glanceable, never nagging” — the qualities that define “great” for this, not features.', 'area'],
+      ['product.success', 'What does success look like in 6 months? (measurable if you can)', 'Daily active members, retention, time-to-value…', 'area'],
+      ['product.notBuilding', 'Explicitly NOT building (the “won’t” list)', 'One per line — the agent defends this boundary against scope creep.', 'area'],
     ] },
     { title: 'Integrations', hint: 'The non-secret values docs-kit and the docs pages need. Blank is fine — the export marks it as a setup step. API keys are never collected here.', fields: [
       ['integrations.githubRepoUrl', 'GitHub repo URL', 'https://github.com/me/acme', 'text'],
