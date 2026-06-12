@@ -34,12 +34,15 @@ target host, and it does the rest — ending with the wizard live at
 Set up the Project Wizard on my Docker host, end to end.
 
 Repo: https://github.com/SteamGauge-Consulting/project-wizard
+GitHub token: <GH_TOKEN>        (classic PAT, `repo` scope — only if the repo is private)
 Host IP: <HOST_IP>
 SSH user: <USER>
 SSH password: <PASSWORD>        (or: SSH key at <PATH>)
 
 Do this:
-1. Clone the repo locally.
+1. Clone the repo locally. If a GitHub token was given, use it:
+   `git clone https://<GH_TOKEN>@github.com/SteamGauge-Consulting/project-wizard.git`
+   (otherwise clone with whatever GitHub access this session already has).
 2. Confirm SSH to the host: `ssh <USER>@<HOST_IP> 'echo ok'`
    (use sshpass for the password, or my key; accept the host key on first connect).
 3. Copy the repo to ~/apps/project-wizard/ on the host with rsync, excluding
@@ -57,9 +60,20 @@ all reachable by hostname via [nip.io] (no DNS setup). The wizard lands at
 `wizard.<HOST_IP>.nip.io`; every project a user later deploys from it lands at
 `<name>.<HOST_IP>.nip.io` on the same box.
 
-> **Repo access:** if this repo is private, Claude clones it with its own
-> credentials and rsyncs to the host (the host needs no GitHub access). If you
-> make it public, the host can `git clone` it directly instead of rsync.
+> **Repo access — it stays private; pick one:**
+> 1. **No key** — Claude clones with the GitHub access already in your session,
+>    then rsyncs to the host (the host needs no GitHub access). Simplest.
+> 2. **A token** — give Claude a **classic PAT** (`repo` scope; read is enough)
+>    and it clones over HTTPS: `git clone https://<TOKEN>@github.com/…`. Use this
+>    when you want the *host itself* to clone or `git pull` updates later.
+>    ⚠️ This org has **deploy keys and fine-grained tokens disabled**, so a
+>    *classic* PAT is the kind that works — make one at
+>    github.com/settings/tokens. (Personal account, not org settings.)
+> 3. **Make it public** — then no key at all.
+>
+> Whichever you use, the repo never needs to be public. To rotate, revoke the
+> classic PAT and issue a new one — nothing on the host is hard-wired to it
+> unless you chose option 2's `git clone` (then update the stored credential).
 
 **Prefer to run it yourself?** SSH to the host, get the repo there (`git clone` or
 copy), then:
