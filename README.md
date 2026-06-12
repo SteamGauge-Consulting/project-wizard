@@ -85,4 +85,15 @@ cp ../docs-kit.js lib/docs-kit.js
   the project's actual answers live in `PLAN-INTAKE.json`, and `AI-HANDOFF.md` is
   the prompt that tells a coding agent to rewrite the examples into the project's
   real artifacts.
+- **Non-Functional & Scale step.** Between Risks and Generate, the wizard captures
+  a `scalability` table (area · target · ADR) for the non-functional needs that
+  shape architecture and ops — availability, latency/throughput, observability,
+  resilience, security, cost. These rows are first-class in `PLAN-INTAKE.json`, and
+  the handoff prompt directs the agent to produce dedicated coverage/ADRs for
+  observability, resilience, async processing, performance + load testing, secret
+  management, cost controls, and security hardening — plus microservices-readiness
+  and IaC/deployment notes — applying a minimal observability + resilience baseline
+  even when the rows are sparse. Each table has a **Load examples** button, and
+  Generate asks for at least 3 requirements, 2 decisions with a why, and 2
+  milestones with a done description before it will run.
 ```

@@ -25,7 +25,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 const emptyAnswers = () => ({
-  product: {}, integrations: {}, requirements: [], decisions: [], milestones: [], risks: [],
+  product: {}, integrations: {}, requirements: [], decisions: [], milestones: [], risks: [], scalability: [],
 });
 
 function summarize(p) {
@@ -53,6 +53,7 @@ function intakeOf(p) {
     decisions: cleanRows(a.decisions, ['concern', 'choice', 'why']),
     milestones: cleanRows(a.milestones, ['name', 'done', 'target']),
     risks: cleanRows(a.risks, ['risk', 'mitigation']),
+    scalability: cleanRows(a.scalability, ['area', 'target', 'adr']),
   };
 }
 function handoffOf(p) {
@@ -68,8 +69,11 @@ function handoffOf(p) {
     '5. Diagrams: update the architecture page (system diagram from the locked decisions) and any flow diagrams the requirements imply.',
     '6. Tests-as-requirements: emit the initial test list (one named test per AC) into the requirements doc.',
     '7. Risks: fold risks/constraints into the requirements and the review checklist.',
+    '8. Non-functional coverage: produce a dedicated section (or a new ADR) for each of — observability (structured logging, metrics, tracing, dashboards, alerting), resilience patterns (timeouts, retries with backoff, circuit breakers, graceful degradation, idempotency), async/background processing (queues, workers, scheduled jobs), performance targets & load testing (SLIs/SLOs plus a load-test plan and tooling), secret management (injection, rotation, none in the image), cost controls (budgets, autoscaling ceilings, right-sizing), and security hardening (authn/z, input validation, dependency/CVE scanning, least privilege, TLS).',
+    '9. Microservices readiness: even if the locked choice is a modular monolith first, document the bounded contexts, a ports-and-adapters (hexagonal) layering recommendation that keeps domain logic transport-agnostic, and the event-driven implications (which interactions should become async events) so the monolith can be split later without a rewrite.',
+    '10. IaC & deployment notes: specify the Dockerfile, fly.toml (or equivalent), a CI/CD pipeline (test → build → deploy), secret injection at deploy time, the DB migration strategy (forward-only, run-on-deploy), and monitoring/alerting wiring.',
     '',
-    'Rules: do not invent requirements not in the intake — ask instead. Keep my wording where it is clearer. Every artifact must trace back to an intake field.',
+    'Rules: do not invent requirements not in the intake — ask instead. Keep my wording where it is clearer. Every artifact must trace back to an intake field. Treat the scalability / non-functional rows as first-class input on par with requirements; if those rows are sparse or weak, still produce a minimal observability and resilience baseline (structured logs, health checks, timeouts and retries, a basic metrics endpoint) and call out the gaps for the owner.',
     '',
     '--- PLAN-INTAKE.json ---',
     JSON.stringify(intakeOf(p), null, 2),
