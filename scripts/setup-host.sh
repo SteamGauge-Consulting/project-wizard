@@ -67,17 +67,27 @@ YML
 ( cd ~/apps/proxy && $DOCKER compose up -d )
 
 # 4b. Portainer — container-management GUI at portainer.<HOST_IP>.nip.io ------
+#     Seed an admin password up front so Portainer never hits its first-run
+#     security timeout (which locks the init screen until you restart it).
+#     --admin-password-file only takes effect on the very first launch; on
+#     re-runs (volume already initialized) it's ignored, so this is idempotent.
 mkdir -p ~/apps/portainer
+if [ ! -f ~/apps/portainer/admin-password ]; then
+  openssl rand -base64 18 | tr -d '\n' > ~/apps/portainer/admin-password
+  chmod 600 ~/apps/portainer/admin-password
+fi
 cat > ~/apps/portainer/docker-compose.yml <<YML
 services:
   portainer:
     image: portainer/portainer-ce:latest
     container_name: portainer
     restart: unless-stopped
+    command: --admin-password-file /run/portainer-admin
     networks: [web]
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - portainer_data:/data
+      - ${HOME}/apps/portainer/admin-password:/run/portainer-admin:ro
     labels:
       - traefik.enable=true
       - traefik.docker.network=web
@@ -118,6 +128,8 @@ echo
 echo "✓ Done."
 echo "  Project Wizard:     http://${WIZARD_HOST}/"
 echo "  Portainer:          http://portainer.${HOST_IP}.nip.io/"
+echo "     login: admin / $(cat ~/apps/portainer/admin-password)"
+echo "     (seeded on first run — change it in Portainer › My account)"
 echo "  Traefik dashboard:  http://${HOST_IP}:8080/dashboard/"
 echo
 echo "Users open the wizard, build a project, then Export → Deploy to Docker"
