@@ -134,7 +134,10 @@ bash scripts/setup-host.sh        # uses the box's primary IP; or pass one expli
 Watch containers come up from the homepage buttons — **Containers** (Portainer,
 a full container GUI) and **Proxy** (the Traefik dashboard) — both deployed by
 `setup-host.sh` and reachable at `portainer.<HOST_IP>.nip.io` and
-`<HOST_IP>:8080`.
+`<HOST_IP>:8080`. Portainer's admin login is **seeded on first run** (printed at
+the end of setup as `admin / <password>`, also in `~/apps/portainer/admin-password`),
+so it never hits its first-launch security timeout — change the password under
+Portainer › My account.
 
 ---
 
