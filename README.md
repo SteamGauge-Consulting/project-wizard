@@ -178,16 +178,20 @@ project-wizard/
 ├── docker-compose.yml     ← portable base (publishes :4500); setup-host.sh adds a Traefik override
 ├── scripts/
 │   └── setup-host.sh      ← one-shot host setup (Docker + Traefik + Portainer + wizard)
+├── scripts/
+│   ├── update.sh          ← pull origin/<branch> + rebuild (self-update an install)
+│   └── setup-deploy-key.sh ← one-time read-only git auth via SSH deploy key
 ├── lib/
-│   ├── storage.js         ← atomic per-project JSON (data/projects/<id>.json)
+│   ├── storage.js         ← atomic per-project JSON + attachments/generated dirs
 │   ├── docs-kit.js        ← vendored generator (the one-file /docs bootstrap)
 │   ├── static-site.js     ← build flat, relative-linked static HTML
 │   └── deploy-bundle.js   ← Dockerfile/compose/deploy.sh for a target host
 ├── public/
 │   ├── index.html · styles.css · app.js   ← shell, dark design system, router + tiles + export sheet
-│   ├── wizard.js          ← the PLAN intake steps
+│   ├── wizard.js          ← the PLAN intake steps (incl. the Reference upload step)
 │   └── demo-sequence.html ← worked example (a fully filled-in plan)
-└── data/                  ← projects/ + generated/ (gitignored; a volume in prod)
+├── DEPLOY.md              ← install + pull-based update flow for a host
+└── data/                  ← projects/ + generated/ + attachments/ (gitignored; a volume in prod)
 ```
 
 ## API
@@ -197,6 +201,7 @@ project-wizard/
 | `GET/POST/PUT/DELETE` | `/api/projects[/:id]` | list / create / save answers / delete |
 | `POST` | `/api/projects/:id/generate` | run docs-kit → materialize the structure |
 | `GET` | `/api/projects/:id/files`, `/file?path=` | browse the generated tree |
+| `GET/POST/DELETE` | `/api/projects/:id/attachments[/:name]` | list / upload / delete reference files |
 | `GET` | `/api/projects/:id/download` | zip of the server bundle |
 | `GET` | `/api/projects/:id/download-static` | zip of the standalone static HTML |
 | `GET` | `/api/projects/:id/download-deploy?host=…` | zip of a runnable deploy bundle |
@@ -216,5 +221,38 @@ project-wizard/
   repo's root `docs-kit.js`. Refresh it with `cp ../Sequence/docs-kit.js
   lib/docs-kit.js` (adjust the path). The AI-handoff prompt lives in
   `handoffOf()` in `server.js`, so refreshing the kit never clobbers it.
+
+## Reference uploads (the "Reference" wizard step)
+
+Owners can attach supporting material — PDFs/docs and **existing-codebase
+archives** — that the coding agent reads *alongside* the requirements. They are
+reference, not scope: the handoff tells the agent to mine them for context but
+still build only what the intake describes.
+
+How it's wired (all the touch-points, for future changes):
+
+- **UI** — `public/wizard.js` `renderReference()` (a `kind: 'reference'` step
+  after Integrations): a drag-and-drop zone + file list with delete. Styles under
+  `/* reference uploads */` in `public/styles.css`. The Generate step shows a
+  bundled-files count.
+- **Transport** — uploads are a **raw body** POST (`express.raw`), one file per
+  request, name in `?name=`. Deliberately *no* multipart dependency — keeps the
+  app Express-only.
+- **Server** (`server.js`) — routes `GET/POST/DELETE /api/projects/:id/attachments`.
+  Names are sanitized to a safe basename (no path traversal), types are
+  allow-listed (`DOC_EXT` / `CODE_EXT`), and there's a `MAX_ATTACH_BYTES` (64 MB)
+  cap with a JSON 413. `kindOf()` tags each file `doc` vs `code`.
+- **Storage** — `storage.attachmentsDir(id)` → `data/attachments/<id>/` (inside
+  the persisted volume; cleaned up on project delete).
+- **Into the export** — `writeAux()` + `syncReferenceDir()` mirror attachments
+  into the generated tree's `reference/` folder (kept in sync on every
+  upload/delete, not just at generate), so they ride along in all three exports.
+  `refsSection()` lists them in `AI-HANDOFF.md` with the "reference, not scope"
+  guidance.
+- **To extend** — broaden file types via the `DOC_EXT` / `CODE_EXT` arrays; change
+  the size cap via `MAX_ATTACH_BYTES`; both are near the top of the attachments
+  section in `server.js`.
+
+See [`DEPLOY.md`](DEPLOY.md) for installing and updating an instance.
 
 [nip.io]: https://nip.io

@@ -11,17 +11,30 @@ push to GitHub  →  on each server:  bash scripts/update.sh  →  pulls + rebui
 Projects and uploaded reference files live in the **`project-wizard-data`**
 Docker volume, so rebuilds and updates never touch your data.
 
-## First-time install on a new server
+## Git auth for a server — pick the method your org allows
+
+A server needs read access to pull this private repo. Two ways:
+
+- **Classic PAT over HTTPS — use this for `SteamGauge-Consulting`.** This org has
+  **deploy keys *and* fine-grained tokens disabled**, so a *classic* PAT (made at
+  github.com/settings/tokens, **`repo`** scope, on your personal account) is the
+  one that works. The repo stays private. Setup is in "First-time install" below.
+- **SSH deploy key** (`scripts/setup-deploy-key.sh`) — cleaner per-server,
+  read-only, but only if your org *allows* deploy keys. It does not work for
+  `SteamGauge-Consulting` today. Use it only on an org/repo where deploy keys are
+  enabled.
+
+## First-time install on a new server (classic PAT)
 
 ```bash
-# 1. clone (read-only access set up in step 2)
-git clone https://github.com/SteamGauge-Consulting/project-wizard.git ~/apps/project-wizard
+# 1. clone with a classic PAT, then strip the token back out of git config
+git clone https://<CLASSIC_PAT>@github.com/SteamGauge-Consulting/project-wizard.git ~/apps/project-wizard
 cd ~/apps/project-wizard
+git remote set-url origin https://github.com/SteamGauge-Consulting/project-wizard.git
 
-# 2. one-time: give THIS server read-only pull access via a deploy key
-bash scripts/setup-deploy-key.sh
-#    → paste the printed public key at the repo's Deploy keys (read-only),
-#      then the script's remote switch to SSH lets this box pull forever.
+# 2. store the token so future pulls / update.sh run unattended
+git config credential.helper store
+git fetch origin main          # Username = your GitHub login · Password = the PAT
 
 # 3. start it
 docker compose up -d --build
@@ -39,17 +52,25 @@ bash scripts/update.sh          # fetch origin/main, hard-reset, rebuild
 always mirrors the repo (any local drift from an earlier manual copy is
 discarded cleanly). Data is preserved in the named volume.
 
-## One-time auth on a server that already exists (e.g. cloned over HTTPS)
+## Fixing auth on a server that already exists
 
-If `git pull` prompts for a GitHub username/password and fails (HTTPS password
-auth is no longer supported), give the box a deploy key once:
+If `git pull`/`update.sh` fails with `Permission denied (publickey)` (remote is
+SSH but the org blocks deploy keys) or prompts for a password it then rejects
+(HTTPS password auth is gone), put it on the classic-PAT path:
 
 ```bash
 cd ~/apps/project-wizard
-bash scripts/setup-deploy-key.sh   # generates key, switches remote to SSH, prints the pubkey
-# add the printed key at: Repo → Settings → Deploy keys → Add (read-only)
-bash scripts/update.sh
+git remote set-url origin https://github.com/SteamGauge-Consulting/project-wizard.git
+git config --unset core.sshCommand 2>/dev/null || true   # drop any leftover SSH-key override
+git config credential.helper store
+rm -f ~/.git-credentials                                 # clear any stale/bad stored cred
+git fetch origin main          # Username = your GitHub login · Password = a classic PAT
+git reset --hard origin/main
+docker compose up -d --build
 ```
+
+Rotate the PAT in GitHub if it's ever exposed, then `rm ~/.git-credentials` and
+re-run one `git fetch origin main` to store the new one.
 
 ## Optional: auto-update on a schedule
 
