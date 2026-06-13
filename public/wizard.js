@@ -86,8 +86,10 @@
 
   // Tables render in object order: requirements, decisions, milestones, risks,
   // then scalability (Non-Functional & Scale) — placed after Risks and before Generate.
+  // A "Reference" step (file uploads) sits right after the scalar steps.
   var STEP_DEFS = [].concat(
     SCALAR_STEPS.map(function (s) { return { kind: 'scalar', title: s.title, def: s }; }),
+    [{ kind: 'reference', title: 'Reference' }],
     Object.keys(TABLES).map(function (t) { return { kind: 'table', title: TABLES[t].title || cap(t), key: t }; }),
     [{ kind: 'generate', title: 'Generate' }]
   );
@@ -168,6 +170,7 @@
 
     function renderStep(def) {
       if (def.kind === 'scalar') return renderScalar(def.def);
+      if (def.kind === 'reference') return renderReference();
       if (def.kind === 'table') return renderTable(def.key);
       return renderGenerate();
     }
@@ -187,6 +190,98 @@
       bodyEl.querySelectorAll('[data-k]').forEach(function (el) {
         el.addEventListener('input', function () { set(answers, el.getAttribute('data-k'), el.value); scheduleSave(); });
       });
+    }
+
+    function fmtBytes(n) {
+      n = Number(n) || 0;
+      if (n < 1024) return n + ' B';
+      if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+      return (n / (1024 * 1024)).toFixed(1) + ' MB';
+    }
+
+    function renderReference() {
+      var maxBytes = 64 * 1024 * 1024;
+      bodyEl.innerHTML =
+        '<div class="step on"><h2>Reference material</h2>' +
+        '<p class="stephint">Optional. Attach existing material the agent should read <b>alongside</b> your requirements — a PDF spec, design notes, or a <b>zip of an existing codebase</b> to reuse as a pattern. These are reference, not scope: the agent mines them for context but still builds only what the requirements describe, and the “won’t build” list still wins. Documents (pdf, md, txt, docx, csv, json, images…) and code/archives (zip, tar, common source files) up to ' + fmtBytes(maxBytes) + ' each.</p>' +
+        '<div class="dropzone" id="dz"><input type="file" id="fileinput" multiple hidden />' +
+        '<div class="dz-inner"><div class="dz-icon">⬆</div><div>Drop files here, or <span class="dz-link">browse</span></div>' +
+        '<div class="hint" id="dz-hint">PDFs, docs, or a codebase .zip</div></div></div>' +
+        '<div id="att-status" class="hint" aria-live="polite"></div>' +
+        '<div id="att-list"></div></div>';
+
+      var dz = bodyEl.querySelector('#dz');
+      var input = bodyEl.querySelector('#fileinput');
+      var statusEl = bodyEl.querySelector('#att-status');
+      var listEl = bodyEl.querySelector('#att-list');
+
+      function drawList(atts) {
+        if (!atts || !atts.length) { listEl.innerHTML = '<p class="hint" style="margin-top:14px">No reference files yet.</p>'; return; }
+        listEl.innerHTML = '<table class="rows att-rows" style="margin-top:14px"><tbody>' + atts.map(function (a) {
+          return '<tr><td class="att-ic">' + (a.kind === 'code' ? '❮❯' : '🖹') + '</td>' +
+            '<td class="att-name">' + esc(a.name) + '</td>' +
+            '<td class="att-kind">' + (a.kind === 'code' ? 'code / archive' : 'document') + '</td>' +
+            '<td class="att-size">' + fmtBytes(a.size) + '</td>' +
+            '<td><button class="del-row" data-del-att="' + esc(a.name) + '" title="remove">×</button></td></tr>';
+        }).join('') + '</tbody></table>';
+        listEl.querySelectorAll('[data-del-att]').forEach(function (b) {
+          b.addEventListener('click', function () {
+            var nm = b.getAttribute('data-del-att');
+            fetch('/api/projects/' + project.id + '/attachments/' + encodeURIComponent(nm), { method: 'DELETE' })
+              .then(function (r) { return r.json(); })
+              .then(function (j) { drawList(j.attachments || []); });
+          });
+        });
+      }
+
+      function refresh() {
+        fetch('/api/projects/' + project.id + '/attachments')
+          .then(function (r) { return r.json(); })
+          .then(function (j) { if (j.maxBytes) maxBytes = j.maxBytes; drawList(j.attachments || []); })
+          .catch(function () { drawList([]); });
+      }
+
+      function uploadOne(file) {
+        return new Promise(function (resolve) {
+          if (file.size > maxBytes) { resolve({ name: file.name, error: 'too large (' + fmtBytes(file.size) + ')' }); return; }
+          fetch('/api/projects/' + project.id + '/attachments?name=' + encodeURIComponent(file.name), {
+            method: 'POST',
+            headers: { 'content-type': file.type || 'application/octet-stream' },
+            body: file,
+          }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+            .then(function (res) { resolve(res.ok ? { name: file.name } : { name: file.name, error: (res.j && res.j.error) || 'failed' }); })
+            .catch(function () { resolve({ name: file.name, error: 'upload failed' }); });
+        });
+      }
+
+      function handleFiles(fileList) {
+        var files = Array.prototype.slice.call(fileList || []);
+        if (!files.length) return;
+        statusEl.textContent = 'uploading ' + files.length + ' file' + (files.length === 1 ? '' : 's') + '…';
+        var errors = [];
+        (function next(i) {
+          if (i >= files.length) {
+            statusEl.textContent = errors.length
+              ? 'done — couldn’t add: ' + errors.map(function (e) { return e.name + ' (' + e.error + ')'; }).join('; ')
+              : 'added ' + files.length + ' file' + (files.length === 1 ? '' : 's') + ' ✓';
+            refresh();
+            return;
+          }
+          uploadOne(files[i]).then(function (res) { if (res.error) errors.push(res); next(i + 1); });
+        })(0);
+      }
+
+      dz.addEventListener('click', function () { input.click(); });
+      input.addEventListener('change', function () { handleFiles(input.files); input.value = ''; });
+      ['dragenter', 'dragover'].forEach(function (ev) {
+        dz.addEventListener(ev, function (e) { e.preventDefault(); dz.classList.add('drag'); });
+      });
+      ['dragleave', 'drop'].forEach(function (ev) {
+        dz.addEventListener(ev, function (e) { e.preventDefault(); if (ev === 'dragleave' && dz.contains(e.relatedTarget)) return; dz.classList.remove('drag'); });
+      });
+      dz.addEventListener('drop', function (e) { if (e.dataTransfer && e.dataTransfer.files) handleFiles(e.dataTransfer.files); });
+
+      refresh();
     }
 
     function renderTable(t) {
@@ -286,12 +381,21 @@
         '<li>' + reqs.length + ' requirements · ' + decs.length + ' decisions · ' + miles.length + ' milestones</li>' +
         '<li>' + scal.length + ' non-functional / scale item' + (scal.length === 1 ? '' : 's') + ' — strong entries here sharpen the architecture the agent produces' +
         (scal.length === 0 ? ' <span style="color:var(--amber)">(none yet — the agent will still apply a baseline)</span>' : '') + '</li>' +
+        '<li id="gen-refs">reference files: …</li>' +
         '</ul>' +
         '<div class="warn" style="border-left-color:var(--accent)">You only owe <b>intent</b>. The agent fills in implementation (libraries, timings, patterns) and the usual things requirements forget — empty / first-run states, auth edge cases, accessibility, undo, backups, the timezone boundary, concurrency, notifications, and a pause mode — so you don’t have to list them.</div>' +
         warnHtml +
         '<div style="margin-top:18px;display:flex;gap:10px;align-items:center">' +
         '<button class="btn primary" id="gen-btn">⚙ Generate doc structure</button>' +
         '<span id="gen-status" class="hint"></span></div></div>';
+      fetch('/api/projects/' + project.id + '/attachments').then(function (r) { return r.json(); }).then(function (j) {
+        var el = bodyEl.querySelector('#gen-refs'); if (!el) return;
+        var n = (j.attachments || []).length;
+        el.innerHTML = n
+          ? n + ' reference file' + (n === 1 ? '' : 's') + ' bundled into <code>reference/</code> — the agent reads them alongside the intake'
+          : 'no reference files <span class="hint">(optional — attach a spec or codebase on the Reference step)</span>';
+      }).catch(function () {});
+
       bodyEl.querySelector('#gen-btn').addEventListener('click', function () {
         var btn = this; btn.disabled = true;
         var status = bodyEl.querySelector('#gen-status'); status.textContent = 'generating…';

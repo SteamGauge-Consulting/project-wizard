@@ -14,6 +14,7 @@ const express = require('express');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const crypto = require('crypto');
 const { spawn, execFile } = require('child_process');
 const storage = require('./lib/storage');
 const staticSite = require('./lib/static-site');
@@ -38,6 +39,7 @@ function summarize(p) {
     oneliner: (p.answers && p.answers.product && p.answers.product.oneliner) || '',
     docsDir: (p.answers && p.answers.integrations && p.answers.integrations.docsDir) || 'docs',
     fileCount: p.manifest ? p.manifest.fileCount : 0,
+    attachmentCount: Array.isArray(p.attachments) ? p.attachments.length : 0,
   };
 }
 
@@ -59,6 +61,20 @@ function intakeOf(p) {
     scalability: cleanRows(a.scalability, ['area', 'target', 'adr']),
   };
 }
+function refsSection(p) {
+  const atts = Array.isArray(p.attachments) ? p.attachments : [];
+  if (!atts.length) return [];
+  const lines = atts.map((a) =>
+    '- `reference/' + a.name + '` (' + (a.kind === 'code' ? 'code / archive' : 'document') + ', ' + fmtBytes(a.size) + ')'
+    + (a.kind === 'code' ? ' — existing code/archive: read it as a pattern and constraint, not as scope' : ''));
+  return [
+    '',
+    '--- REFERENCE MATERIAL (./reference/) ---',
+    'The owner attached ' + atts.length + ' supporting file(s) as additional context — read them ALONGSIDE this intake before writing. They are reference, NOT scope: use them to understand the existing codebase, prior art, or domain detail, but every NEW user-facing behavior must still trace to a PLAN-INTAKE.json field, and the Not-building list still governs. If a reference file contradicts the intake, surface the conflict instead of silently following either one. Codebase archives (.zip/.tar) describe how things are or could be built — mine them for patterns, data shapes, and constraints; do not treat their incidental features as requirements.',
+    ...lines,
+  ];
+}
+
 function handoffOf(p) {
   const d = (p.answers && p.answers.integrations && p.answers.integrations.docsDir) || 'docs';
   return [
@@ -80,10 +96,72 @@ function handoffOf(p) {
     '12. Cover the commonly-omitted concerns proactively — treat each as part of the spec even when the intake is silent: choose a sensible default, implement it, and flag ONLY the ones that need a genuine product decision. The usual blind spots: first-run / seed / empty state; auth edge cases (bad credentials, session expiry, lockout / rate-limiting); the "today" / timezone boundary and clock rollover; concurrency and multi-device live refresh; data lifecycle (export, archival, retention, undo, audit log of who-did-what-when); notification permissions, triggers, and quiet hours; offline / installable behavior; backup & restore; and a global pause / quiet mode.',
     '',
     'Rules: distinguish SCOPE from IMPLEMENTATION. Do not invent new scope/features that aren’t in the intake — ask. But DO supply implementation detail, the quality baseline (#11), and sensible defaults for the cross-cutting concerns (#12) without asking — only escalate genuine product decisions. Prefer the owner’s plain-English intent over inventing detail, and keep their wording where it is clearer. Every user-facing behavior must trace to an intake field; everything else is yours to choose well. Treat the scalability / non-functional rows as first-class; if sparse, still produce a minimal observability + resilience baseline and call out the gaps.',
+  ].concat(refsSection(p)).concat([
     '',
     '--- PLAN-INTAKE.json ---',
     JSON.stringify(intakeOf(p), null, 2),
-  ].join('\n');
+  ]).join('\n');
+}
+
+// ─── reference attachments ───────────────────────────────────────────────────
+// Uploaded supporting files (docs + codebase archives) the agent reads alongside
+// the intake. Stored under data/attachments/<id>/; copied into the generated
+// tree's reference/ folder so they ride along in every export.
+const MAX_ATTACH_BYTES = 64 * 1024 * 1024;          // per file
+const DOC_EXT  = ['pdf','txt','md','markdown','rst','doc','docx','odt','rtf','csv','tsv','json','yaml','yml','toml','xml','html','htm','png','jpg','jpeg','gif','svg','webp'];
+const CODE_EXT = ['zip','tar','tgz','gz','bz2','7z','js','mjs','cjs','ts','tsx','jsx','py','rb','go','rs','java','kt','c','h','cpp','hpp','cs','php','swift','sql','sh','ipynb'];
+const ALLOWED_EXT = new Set([...DOC_EXT, ...CODE_EXT]);
+
+function fmtBytes(n) {
+  n = Number(n) || 0;
+  if (n < 1024) return n + ' B';
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+  return (n / (1024 * 1024)).toFixed(1) + ' MB';
+}
+function extOf(name) { const m = /\.([a-z0-9]+)$/i.exec(name || ''); return m ? m[1].toLowerCase() : ''; }
+function kindOf(name) { return CODE_EXT.indexOf(extOf(name)) !== -1 ? 'code' : 'doc'; }
+
+// Strip any path, keep a safe basename. Returns '' if nothing usable remains.
+function safeFileName(raw) {
+  let n = String(raw || '').replace(/\\/g, '/');
+  n = n.slice(n.lastIndexOf('/') + 1);              // basename only
+  n = n.normalize('NFC').replace(/[\x00-\x1f]/g, '');
+  n = n.replace(/[^A-Za-z0-9._ \-()+]/g, '_').replace(/\s+/g, ' ').trim();
+  n = n.replace(/^\.+/, '');                          // no leading dots (no dotfiles / traversal)
+  if (n.length > 120) { const e = extOf(n); n = n.slice(0, 110) + (e ? '.' + e : ''); }
+  return n;
+}
+
+function listAttachments(p) {
+  const atts = Array.isArray(p.attachments) ? p.attachments : [];
+  const dir = storage.attachmentsDir(p.id);
+  return atts.filter((a) => { try { return fs.statSync(path.join(dir, a.name)).isFile(); } catch { return false; } });
+}
+
+// Mirror current attachments into <genDir>/reference/ (clears stale ones first).
+function syncReferenceDir(p) {
+  const genDir = storage.generatedDir(p.id);
+  if (!fs.existsSync(genDir)) return;
+  const refDir = path.join(genDir, 'reference');
+  try { fs.rmSync(refDir, { recursive: true, force: true }); } catch {}
+  const atts = listAttachments(p);
+  if (!atts.length) return;
+  fs.mkdirSync(refDir, { recursive: true });
+  const src = storage.attachmentsDir(p.id);
+  for (const a of atts) {
+    try { fs.copyFileSync(path.join(src, a.name), path.join(refDir, a.name)); } catch {}
+  }
+}
+
+// Write the project's own intake + handoff (+ reference files) into a tree.
+// Shared by generate and by attachment add/delete (to keep an already-generated
+// tree consistent without forcing a full re-run).
+function writeAux(p, dir) {
+  try {
+    fs.writeFileSync(path.join(dir, 'PLAN-INTAKE.json'), JSON.stringify(intakeOf(p), null, 2) + '\n');
+    fs.writeFileSync(path.join(dir, 'AI-HANDOFF.md'), handoffOf(p) + '\n');
+  } catch (e) { /* non-fatal */ }
+  syncReferenceDir(p);
 }
 
 // ─── projects CRUD ──────────────────────────────────────────────────────────
@@ -122,6 +200,61 @@ app.delete('/api/projects/:id', (req, res) => {
   res.json({ ok: true });
 });
 
+// ─── reference attachments: list / upload / delete ───────────────────────────
+app.get('/api/projects/:id/attachments', (req, res) => {
+  const p = storage.getProject(req.params.id);
+  if (!p) return res.status(404).json({ error: 'not found' });
+  if (Array.isArray(p.attachments) && p.attachments.length !== listAttachments(p).length) {
+    p.attachments = listAttachments(p); storage.saveProject(p);
+  }
+  res.json({ attachments: listAttachments(p), maxBytes: MAX_ATTACH_BYTES });
+});
+
+// Raw-body upload — one file per request, name via ?name=. Keeps the tool
+// dependency-light (no multipart parser): the browser POSTs the File as the body.
+app.post('/api/projects/:id/attachments',
+  express.raw({ type: () => true, limit: MAX_ATTACH_BYTES }),
+  (req, res) => {
+    const p = storage.getProject(req.params.id);
+    if (!p) return res.status(404).json({ error: 'not found' });
+    const name = safeFileName(req.query.name);
+    if (!name) return res.status(400).json({ error: 'a valid filename is required' });
+    if (!ALLOWED_EXT.has(extOf(name))) {
+      return res.status(415).json({ error: 'unsupported file type “.' + (extOf(name) || '?') + '”. Allowed: documents (pdf, md, txt, docx, csv, json, images…) and code/archives (zip, tar, and common source files).' });
+    }
+    const buf = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+    if (!buf.length) return res.status(400).json({ error: 'empty file' });
+
+    const dir = storage.attachmentsDir(p.id);
+    fs.mkdirSync(dir, { recursive: true });
+    const tmp = path.join(dir, '.' + crypto.randomBytes(4).toString('hex') + '.tmp');
+    try {
+      fs.writeFileSync(tmp, buf);
+      fs.renameSync(tmp, path.join(dir, name));
+    } catch (e) {
+      try { fs.rmSync(tmp, { force: true }); } catch {}
+      return res.status(500).json({ error: 'could not store file' });
+    }
+
+    p.attachments = (Array.isArray(p.attachments) ? p.attachments : []).filter((a) => a.name !== name);
+    p.attachments.push({ name, size: buf.length, kind: kindOf(name), uploadedAt: new Date().toISOString() });
+    storage.saveProject(p);
+    writeAux(p, storage.generatedDir(p.id));        // keep an already-generated tree in sync
+    res.status(201).json({ ok: true, attachment: { name, size: buf.length, kind: kindOf(name) }, attachments: listAttachments(p) });
+  });
+
+app.delete('/api/projects/:id/attachments/:name', (req, res) => {
+  const p = storage.getProject(req.params.id);
+  if (!p) return res.status(404).json({ error: 'not found' });
+  const name = safeFileName(req.params.name);
+  if (!name) return res.status(400).json({ error: 'bad name' });
+  try { fs.rmSync(path.join(storage.attachmentsDir(p.id), name), { force: true }); } catch {}
+  p.attachments = (Array.isArray(p.attachments) ? p.attachments : []).filter((a) => a.name !== name);
+  storage.saveProject(p);
+  writeAux(p, storage.generatedDir(p.id));
+  res.json({ ok: true, attachments: listAttachments(p) });
+});
+
 // ─── generate the doc structure via docs-kit ────────────────────────────────
 app.post('/api/projects/:id/generate', (req, res) => {
   const p = storage.getProject(req.params.id);
@@ -147,11 +280,8 @@ app.post('/api/projects/:id/generate', (req, res) => {
     if (err) {
       return res.status(500).json({ error: 'generation failed', detail: String(stderr || err.message).slice(0, 500) });
     }
-    // Drop the project's own intake + handoff into the generated tree.
-    try {
-      fs.writeFileSync(path.join(dir, 'PLAN-INTAKE.json'), JSON.stringify(intakeOf(p), null, 2) + '\n');
-      fs.writeFileSync(path.join(dir, 'AI-HANDOFF.md'), handoffOf(p) + '\n');
-    } catch (e) { /* non-fatal */ }
+    // Drop the project's own intake + handoff + reference files into the tree.
+    writeAux(p, dir);
 
     const files = walkTree(dir);
     p.status = 'generated';
@@ -331,6 +461,15 @@ app.get('/api/config', (req, res) => {
 });
 
 app.get('/healthz', (req, res) => res.json({ ok: true }));
+
+// JSON error handler — so an oversized upload (express.raw 413) and friends come
+// back as JSON the client can read, not Express's default HTML error page.
+app.use((err, req, res, next) => {
+  if (res.headersSent) return next(err);
+  const tooBig = err && (err.type === 'entity.too.large' || err.status === 413);
+  if (tooBig) return res.status(413).json({ error: 'file is too large (max ' + fmtBytes(MAX_ATTACH_BYTES) + ' per file)' });
+  res.status(err.status || 500).json({ error: String((err && err.message) || 'server error') });
+});
 
 app.listen(PORT, () => {
   console.log('project-wizard on http://localhost:' + PORT);
