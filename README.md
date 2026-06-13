@@ -91,7 +91,7 @@ this wizard, all reachable by hostname via [nip.io] (no DNS setup). The wizard
 lands at `wizard.<HOST_IP>.nip.io`; Portainer at `portainer.<HOST_IP>.nip.io`; the
 Traefik dashboard at `<HOST_IP>:8080`; and every project a user later deploys from
 the wizard lands at `<name>.<HOST_IP>.nip.io` on the same box. The wizard homepage
-also carries **🐳 Containers** (Portainer) and **🔌 Proxy** (Traefik) buttons.
+also carries **Containers** (Portainer) and **Proxy** (Traefik) buttons.
 
 > **Repo access — it stays private; pick one:**
 > 1. **No key** — Claude clones with the GitHub access already in your session,
@@ -131,8 +131,8 @@ bash scripts/setup-host.sh        # uses the box's primary IP; or pass one expli
      The wizard rsyncs the package to the host and runs `docker compose up -d
      --build`, showing the live URL + build log.
 
-Watch containers come up from the homepage buttons — **🐳 Containers** (Portainer,
-a full container GUI) and **🔌 Proxy** (the Traefik dashboard) — both deployed by
+Watch containers come up from the homepage buttons — **Containers** (Portainer,
+a full container GUI) and **Proxy** (the Traefik dashboard) — both deployed by
 `setup-host.sh` and reachable at `portainer.<HOST_IP>.nip.io` and
 `<HOST_IP>:8080`.
 

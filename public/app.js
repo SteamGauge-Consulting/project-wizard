@@ -40,8 +40,8 @@
   }
   function mgmtBarHtml(links) {
     if (!links.portainer && !links.proxy) return '';
-    return (links.portainer ? '<a class="btn sm ghost" target="_blank" href="' + esc(links.portainer) + '" title="Portainer — container management">🐳 Containers</a>' : '') +
-           (links.proxy ? '<a class="btn sm ghost" target="_blank" href="' + esc(links.proxy) + '" title="Traefik — reverse-proxy dashboard">🔌 Proxy</a>' : '');
+    return (links.portainer ? '<a class="btn sm ghost" target="_blank" href="' + esc(links.portainer) + '" title="Portainer — container management">Containers</a>' : '') +
+           (links.proxy ? '<a class="btn sm ghost" target="_blank" href="' + esc(links.proxy) + '" title="Traefik — reverse-proxy dashboard">Proxy</a>' : '');
   }
   function fillMgmt() {
     var slot = app.querySelector('#mgmt-links');
@@ -184,7 +184,7 @@
           '<div class="row2"><div><label>App name</label><input type="text" id="d-name" placeholder="my-docs" /></div><div><label>Container port</label><input type="text" id="d-port" value="3000" /></div></div>' +
           '<label>Hostname for Traefik <span style="text-transform:none;letter-spacing:0">(optional)</span></label><input type="text" id="d-hostname" placeholder="docs.10.10.0.208.nip.io" />' +
           '<div class="hint">Leave blank to publish the container port directly instead of going through a proxy.</div>' +
-          '<div style="display:flex;gap:8px;margin-top:12px"><button class="btn sm primary" id="d-deploy">🚀 Deploy now</button><button class="btn sm" id="d-dl">⬇ Download bundle</button></div>' +
+          '<div style="display:flex;gap:8px;margin-top:12px"><button class="btn sm primary" id="d-deploy">Deploy now</button><button class="btn sm" id="d-dl">Download bundle</button></div>' +
           '<div class="hint" id="d-note" style="margin-top:8px"></div>' +
           '<pre id="d-out"></pre>' +
         '</div></div>' +
