@@ -91,7 +91,7 @@
     SCALAR_STEPS.map(function (s) { return { kind: 'scalar', title: s.title, def: s }; }),
     [{ kind: 'reference', title: 'Reference' }],
     Object.keys(TABLES).map(function (t) { return { kind: 'table', title: TABLES[t].title || cap(t), key: t }; }),
-    [{ kind: 'generate', title: 'Generate' }]
+    [{ kind: 'generate', title: 'Build plan' }]
   );
 
   function cap(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
@@ -397,41 +397,99 @@
         ? '<div class="warn"><b>Heads up:</b> these requirements have a thin or generic test — the agent will have to ask you for detail: ' + weak.map(esc).join('; ') + '.</div>'
         : '';
 
+      var LS_KEY = 'pw_anthropic_key', LS_DEPLOY = 'pw_deploy';
+      var savedKey = '', dep = {};
+      try { savedKey = localStorage.getItem(LS_KEY) || ''; dep = JSON.parse(localStorage.getItem(LS_DEPLOY) || '{}'); } catch (e) {}
+      var defName = (p.name || project.name || 'project').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+
       bodyEl.innerHTML =
-        '<div class="step on"><h2>Generate the doc structure</h2>' +
-        '<p class="stephint">This runs docs-kit with your answers and materializes the full /docs file tree for the project — pages, governance library, the markdown corpus, the GitHub gate, plus your PLAN-INTAKE.json and AI handoff prompt. You can regenerate any time.</p>' +
+        '<div class="step on"><h2>Build plan</h2>' +
+        '<p class="stephint">One step: AI builds your project’s docs (architecture &amp; Gantt diagrams, Given/When/Then acceptance criteria, ADRs), optionally creates a Linear project with issues, then deploys it to a Docker host and hands you the live URL.</p>' +
         '<ul class="hint" style="line-height:1.9">' +
-        '<li><b>' + esc(p.name || project.name) + '</b>' + (p.domain ? ' · ' + esc(p.domain) : '') + '</li>' +
-        '<li>docs dir: <code>' + esc(v.docsDir || 'docs') + '</code>' + (v.githubRepoUrl ? ' · repo: ' + esc(v.githubRepoUrl) : '') + '</li>' +
-        '<li>' + reqs.length + ' requirements · ' + decs.length + ' decisions · ' + miles.length + ' milestones</li>' +
-        '<li>' + scal.length + ' non-functional / scale item' + (scal.length === 1 ? '' : 's') + ' — strong entries here sharpen the architecture the agent produces' +
-        (scal.length === 0 ? ' <span style="color:var(--amber)">(none yet — the agent will still apply a baseline)</span>' : '') + '</li>' +
+        '<li><b>' + esc(p.name || project.name) + '</b>' + (p.domain ? ' · ' + esc(p.domain) : '') + ' — ' + reqs.length + ' requirements · ' + decs.length + ' decisions · ' + miles.length + ' milestones</li>' +
         '<li id="gen-refs">reference files: …</li>' +
-        '</ul>' +
-        '<div class="warn" style="border-left-color:var(--accent)">You only owe <b>intent</b>. The agent fills in implementation (libraries, timings, patterns) and the usual things requirements forget — empty / first-run states, auth edge cases, accessibility, undo, backups, the timezone boundary, concurrency, notifications, and a pause mode — so you don’t have to list them.</div>' +
-        warnHtml +
-        '<div style="margin-top:18px;display:flex;gap:10px;align-items:center">' +
-        '<button class="btn primary" id="gen-btn">⚙ Generate doc structure</button>' +
-        '<span id="gen-status" class="hint"></span></div></div>';
+        '</ul>' + warnHtml +
+        '<div class="dform">' +
+          '<label>Claude API key</label><input type="password" id="bp-ai" placeholder="sk-ant-… (drives the AI build)" value="' + esc(savedKey) + '" autocomplete="off" />' +
+          '<label class="chk"><input type="checkbox" id="bp-remember"' + (savedKey ? ' checked' : '') + ' /> Remember on this device</label>' +
+
+          '<div class="bp-sec">Deploy target (Docker host over SSH)</div>' +
+          '<label>SSH host / IP</label><input type="text" id="bp-host" placeholder="10.10.0.208" value="' + esc(dep.host || '') + '" />' +
+          '<div class="row2"><div><label>SSH user</label><input type="text" id="bp-user" value="' + esc(dep.user || 'docker') + '" /></div><div><label>SSH port</label><input type="text" id="bp-sshport" value="' + esc(dep.sshPort || '22') + '" /></div></div>' +
+          '<label>SSH password</label><input type="password" id="bp-pass" placeholder="needed so the wizard can push over SSH" autocomplete="off" />' +
+          '<div class="row2"><div><label>App name</label><input type="text" id="bp-name" value="' + esc(dep.name || defName) + '" /></div><div><label>Container port</label><input type="text" id="bp-port" value="' + esc(dep.port || '3000') + '" /></div></div>' +
+          '<label>Hostname for Traefik <span style="text-transform:none;letter-spacing:0">(optional)</span></label><input type="text" id="bp-hostname" placeholder="' + esc(defName) + '.10.10.0.208.nip.io" value="' + esc(dep.hostname || '') + '" />' +
+          '<div class="hint">Leave the host blank to just build the docs in the wizard (no deploy). Keys &amp; password are used per-request, never stored on the server.</div>' +
+
+          '<div class="bp-sec">Linear tracker <span style="text-transform:none;letter-spacing:0">(optional)</span></div>' +
+          '<div class="row2" style="align-items:flex-end"><div style="flex:2"><label>Linear API key</label><input type="password" id="bp-lin" placeholder="lin_api_… (write access)" autocomplete="off" /></div><div style="flex:1"><button class="btn sm" id="bp-teams">Load teams</button></div></div>' +
+          '<label>Team</label><select id="bp-team" disabled><option value="">— enter a key, then Load teams —</option></select>' +
+          '<div class="hint">Creates a <b>brand-new</b> Linear project with milestones + issues — never writes into an existing project.</div>' +
+
+          '<div style="margin-top:16px"><button class="btn primary" id="bp-go">⚙ Build plan</button></div>' +
+          '<div id="bp-prog"></div>' +
+        '</div></div>';
+
+      var cfg = {};
+      fetch('/api/config').then(function (r) { return r.json(); }).then(function (c) { cfg = c || {}; }).catch(function () {});
       fetch('/api/projects/' + project.id + '/attachments').then(function (r) { return r.json(); }).then(function (j) {
         var el = bodyEl.querySelector('#gen-refs'); if (!el) return;
         var n = (j.attachments || []).length;
-        el.innerHTML = n
-          ? n + ' reference file' + (n === 1 ? '' : 's') + ' bundled into <code>reference/</code> — the agent reads them alongside the intake'
-          : 'no reference files <span class="hint">(optional — attach a spec or codebase on the Reference step)</span>';
+        el.innerHTML = n ? n + ' reference file' + (n === 1 ? '' : 's') + ' bundled into <code>reference/</code>' : 'no reference files <span class="hint">(optional)</span>';
       }).catch(function () {});
 
-      bodyEl.querySelector('#gen-btn').addEventListener('click', function () {
-        var btn = this; btn.disabled = true;
-        var status = bodyEl.querySelector('#gen-status'); status.textContent = 'generating…';
-        doSave();
-        fetch('/api/projects/' + project.id + '/generate', { method: 'POST' })
+      var sel = bodyEl.querySelector('#bp-team'), prog = bodyEl.querySelector('#bp-prog');
+      function val(id) { var e = bodyEl.querySelector(id); return e ? e.value.trim() : ''; }
+      function step(msg, cls) { prog.innerHTML = '<div class="bp-step ' + (cls || '') + '">' + msg + '</div>'; }
+
+      bodyEl.querySelector('#bp-teams').addEventListener('click', function () {
+        var k = val('#bp-lin'); if (!k) { step('Enter a Linear key first', 'err'); return; }
+        step('Loading teams…');
+        fetch('/api/linear/teams', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ key: k }) })
           .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
           .then(function (res) {
-            if (!res.ok) throw new Error(res.j.detail || res.j.error || 'failed');
-            location.hash = '#/p/' + project.id + '/docs';
-          })
-          .catch(function (e) { status.textContent = 'failed: ' + e.message; btn.disabled = false; });
+            if (!res.ok) { step('✗ ' + (res.j.error || 'failed'), 'err'); return; }
+            prog.innerHTML = ''; sel.disabled = false;
+            sel.innerHTML = '<option value="">— pick a team —</option>' + res.j.teams.map(function (t) { return '<option value="' + esc(t.id) + '">' + esc(t.name) + ' (' + esc(t.key) + ')</option>'; }).join('');
+          }).catch(function (e) { step('✗ ' + e.message, 'err'); });
+      });
+
+      bodyEl.querySelector('#bp-go').addEventListener('click', function () {
+        var btn = this;
+        var key = val('#bp-ai'), host = val('#bp-host'), linKey = val('#bp-lin'), teamId = sel.value;
+        var deploy = { host: host, user: val('#bp-user') || 'docker', sshPort: val('#bp-sshport') || '22', password: val('#bp-pass'), name: val('#bp-name') || defName, port: val('#bp-port') || '3000', hostname: val('#bp-hostname') };
+        try {
+          if (bodyEl.querySelector('#bp-remember').checked && key) localStorage.setItem(LS_KEY, key); else localStorage.removeItem(LS_KEY);
+          localStorage.setItem(LS_DEPLOY, JSON.stringify({ host: host, user: deploy.user, sshPort: deploy.sshPort, name: deploy.name, port: deploy.port, hostname: deploy.hostname }));
+        } catch (e) {}
+        if (host && !deploy.password) { step('Enter the SSH password to deploy (or clear the host to just build).', 'err'); return; }
+        btn.disabled = true; doSave();
+        var P = function (url, body) { return fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body || {}) }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); }); };
+
+        step('1/3 · Generating the doc structure…');
+        P('/api/projects/' + project.id + '/generate').then(function (g) {
+          if (!g.ok) throw new Error(g.j.detail || g.j.error || 'generate failed');
+          var wantAI = key || cfg.aiServerKey;
+          if (!wantAI) { step('2/3 · No Claude key — skipping AI build (clean tables only)…'); return { ok: true, j: { skipped: true } }; }
+          step('2/3 · Building docs with AI' + (linKey && teamId ? ' + creating Linear issues' : '') + '… (can take a minute)');
+          return P('/api/projects/' + project.id + '/build-full', { apiKey: key, linearKey: linKey, teamId: teamId });
+        }).then(function (b) {
+          if (b && !b.ok) throw new Error(b.j.error || 'AI build failed');
+          window.__bp_linear = b && b.j && b.j.linear;
+          if (!host) { return { ok: true, j: { noDeploy: true } }; }
+          step('3/3 · Deploying to ' + esc(host) + '… (first build can take a minute)');
+          return P('/api/projects/' + project.id + '/deploy', deploy);
+        }).then(function (d) {
+          btn.disabled = false;
+          var lin = window.__bp_linear;
+          var linHtml = lin ? '<div class="bp-step ok">Linear: ' + lin.counts.issues + ' issues, ' + lin.counts.milestones + ' milestones · <a href="' + esc(lin.url) + '" target="_blank">open ↗</a></div>' : '';
+          if (d.j && d.j.noDeploy) {
+            prog.innerHTML = '<div class="bp-step ok">✓ Docs built in the wizard. <a href="#/p/' + project.id + '/docs">Open the docs browser →</a> Add an SSH host above to deploy.</div>' + linHtml;
+            return;
+          }
+          if (!d.ok || !d.j.ok) { prog.innerHTML = '<div class="bp-step err">✗ Deploy failed: ' + esc((d.j && d.j.error) || 'unknown') + '</div>' + linHtml + (d.j && d.j.output ? '<pre class="bp-out">' + esc(d.j.output.slice(-2000)) + '</pre>' : ''); return; }
+          prog.innerHTML = '<div class="bp-step ok">✓ Live at <a href="' + esc(d.j.url) + '" target="_blank"><b>' + esc(d.j.url) + '</b></a></div>' + linHtml;
+        }).catch(function (e) { btn.disabled = false; step('✗ ' + e.message, 'err'); });
       });
     }
 

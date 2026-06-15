@@ -193,3 +193,11 @@ table.rows td.grip{width:22px;text-align:center;color:var(--dim);cursor:grab;use
 table.rows td.grip:active{cursor:grabbing;}
 table.rows tr.dragging{opacity:.45;}
 table.rows tr.drop-to td{border-top:2px solid var(--accent);}
+
+/* build-plan step */
+.bp-sec{margin:20px 0 2px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);border-top:1px solid var(--line);padding-top:14px;}
+.bp-step{margin-top:12px;font-size:14px;color:var(--text-dim,#C8C8C2);background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:11px 13px;}
+.bp-step.ok{border-color:var(--you-bd,#3f5a25);color:#b6d98a;background:rgba(151,196,89,.08);}
+.bp-step.err{border-color:var(--red);color:var(--red);background:rgba(229,86,91,.06);}
+.bp-step a{color:var(--accent);} 
+.bp-out{margin-top:8px;max-height:200px;overflow:auto;background:#141416;border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:11px;white-space:pre-wrap;}
