@@ -287,8 +287,17 @@
 
     function renderTable(t) {
       var spec = TABLES[t];
-      var html = '<div class="step on"><h2>' + (spec.title || cap(t)) + '</h2><p class="stephint">' + HINTS[t] + '</p><div id="rowhost"></div></div>';
+      var dateField = (t === 'milestones')
+        ? '<label style="margin-top:0">Target start date</label>' +
+          '<input type="date" id="ms-start" value="' + esc(answers.startDate || '') + '" style="max-width:220px" />' +
+          '<div class="hint" style="margin-bottom:8px">Anchors milestone target dates — a “Week N” target becomes start + N weeks in Linear.</div>'
+        : '';
+      var html = '<div class="step on"><h2>' + (spec.title || cap(t)) + '</h2><p class="stephint">' + HINTS[t] + '</p>' + dateField + '<div id="rowhost"></div></div>';
       bodyEl.innerHTML = html;
+      if (t === 'milestones') {
+        var ds = bodyEl.querySelector('#ms-start');
+        ds.addEventListener('input', function () { answers.startDate = ds.value; scheduleSave(); });
+      }
       drawRows(t, bodyEl.querySelector('#rowhost'), spec);
     }
 

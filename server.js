@@ -57,6 +57,7 @@ function intakeOf(p) {
   const a = p.answers || emptyAnswers();
   return {
     version: 1, kind: 'plan-intake', project: p.name,
+    startDate: (a.startDate || '').trim ? (a.startDate || '').trim() : (a.startDate || ''),
     product: a.product || {}, integrations: a.integrations || {},
     requirements: cleanRows(a.requirements, ['title', 'test']),
     decisions: cleanRows(a.decisions, ['concern', 'choice', 'why']),
@@ -425,24 +426,34 @@ app.post('/api/projects/:id/build-full', async (req, res) => {
 
   const b = req.body || {};
   const intake = intakeOf(p);
+  const docsDir = (p.answers && p.answers.integrations && p.answers.integrations.docsDir) || 'docs';
   const out = { ok: true };
+  let plan = null;
 
-  // 1. AI enrichment → re-render the docs richly.
-  try {
-    const enrich = await enrichLib.enrich(intake, b.apiKey);
-    renderIntake.render(dir, intake, { docsDir: (p.answers && p.answers.integrations && p.answers.integrations.docsDir) || 'docs', enrich });
-    writeAux(p, dir);
-    out.enriched = true;
-    out.counts = { requirements: (intake.requirements || []).length, decisions: (intake.decisions || []).length, milestones: (intake.milestones || []).length };
-  } catch (e) {
-    return res.status(e.status || 500).json({ error: 'AI build failed: ' + (e.message || 'unknown error') });
+  // 1. AI enrichment → re-render the docs richly + produce the governance plan.
+  //    Optional: skipped when no key is available (docs stay as clean tables),
+  //    so the Linear step below can still run on its own.
+  const apiKey = (b.apiKey && String(b.apiKey).trim()) || '';
+  if (apiKey || enrichLib.aiEnabled()) {
+    try {
+      let corpus = null;
+      try { corpus = reverse.buildCorpus(storage.attachmentsDir(p.id)); } catch (e) {}
+      const enrich = await enrichLib.enrich(intake, apiKey, corpus && corpus.includedCount ? corpus : null);
+      plan = enrich.plan;
+      renderIntake.render(dir, intake, { docsDir, enrich });
+      writeAux(p, dir);
+      out.enriched = true;
+      out.counts = { requirements: (intake.requirements || []).length, decisions: (intake.decisions || []).length, milestones: (intake.milestones || []).length };
+    } catch (e) {
+      return res.status(e.status || 500).json({ error: 'AI build failed: ' + (e.message || 'unknown error') });
+    }
   }
 
   // 2. Optional: create the Linear tracker (a brand-new project — never an existing one).
   const linearKey = (b.linearKey && String(b.linearKey).trim()) || '';
   if (linearKey && b.teamId) {
     try {
-      const lr = await linear.createProjectWithIssues(linearKey, { teamId: b.teamId, name: p.name, intake });
+      const lr = await linear.createProjectWithIssues(linearKey, { teamId: b.teamId, name: p.name, intake, startDate: intake.startDate, plan });
       out.linear = lr;
       p.linearUrl = lr.url;
     } catch (e) {
