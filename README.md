@@ -119,9 +119,13 @@ bash scripts/setup-host.sh        # uses the box's primary IP; or pass one expli
 
 ## How users use it
 
-1. Open `http://wizard.<HOST_IP>.nip.io/` → **New project**.
-2. Walk the steps (Product · Integrations · Requirements · Decisions · Milestones
-   · Risks · Non-Functional & Scale), then **Generate**.
+1. Open `http://wizard.<HOST_IP>.nip.io/` → **New project**, then pick how to start:
+   - **Start from scratch** — answer the wizard.
+   - **Use an existing app** — upload its code (files, a folder, or a `.zip`) and
+     the wizard reverse-engineers a draft plan you review instead of writing from
+     scratch. See [Reverse-engineer from code](#reverse-engineer-from-code-use-an-existing-app-to-start).
+2. Walk the steps (Product · Integrations · Reference · Requirements · Decisions ·
+   Milestones · Risks · Non-Functional & Scale), then **Generate**.
 3. On the project's doc view, hit **Export**:
    - **Download — server bundle** (run with `npm start`),
    - **Download — standalone HTML** (flat pages, relative links, opens from a
@@ -184,10 +188,11 @@ project-wizard/
 ├── lib/
 │   ├── storage.js         ← atomic per-project JSON + attachments/generated dirs
 │   ├── docs-kit.js        ← vendored generator (the one-file /docs bootstrap)
+│   ├── reverse-engineer.js ← corpus builder + Claude call (structured output) + handoff prompt
 │   ├── static-site.js     ← build flat, relative-linked static HTML
 │   └── deploy-bundle.js   ← Dockerfile/compose/deploy.sh for a target host
 ├── public/
-│   ├── index.html · styles.css · app.js   ← shell, dark design system, router + tiles + export sheet
+│   ├── index.html · styles.css · app.js   ← shell, design system, router + tiles + export + import screen
 │   ├── wizard.js          ← the PLAN intake steps (incl. the Reference upload step)
 │   └── demo-sequence.html ← worked example (a fully filled-in plan)
 ├── DEPLOY.md              ← install + pull-based update flow for a host
@@ -201,7 +206,9 @@ project-wizard/
 | `GET/POST/PUT/DELETE` | `/api/projects[/:id]` | list / create / save answers / delete |
 | `POST` | `/api/projects/:id/generate` | run docs-kit → materialize the structure |
 | `GET` | `/api/projects/:id/files`, `/file?path=` | browse the generated tree |
-| `GET/POST/DELETE` | `/api/projects/:id/attachments[/:name]` | list / upload / delete reference files |
+| `GET/POST/DELETE` | `/api/projects/:id/attachments` | list / upload (`?name=` doc or `?path=` nested) / delete (`?name=` or all) |
+| `POST` | `/api/projects/:id/generate-draft` | reverse-engineer a draft intake from uploaded code (Claude, or handoff prompt) |
+| `POST` | `/api/projects/:id/import-intake` | load a PLAN-INTAKE.json into the project |
 | `GET` | `/api/projects/:id/download` | zip of the server bundle |
 | `GET` | `/api/projects/:id/download-static` | zip of the standalone static HTML |
 | `GET` | `/api/projects/:id/download-deploy?host=…` | zip of a runnable deploy bundle |
@@ -210,8 +217,11 @@ project-wizard/
 ## Notes
 
 - **No secrets stored.** The wizard collects only non-secret integration values;
-  generated structures ship key placeholders. An SSH password entered for
-  **Deploy now** is used transiently and never persisted.
+  generated structures ship key placeholders. Secrets entered in the GUI — the
+  **Deploy now** SSH password and the **Claude API key** for reverse-engineering
+  — are used transiently per-request and never written to disk on the server.
+  (A `localStorage` "remember on this device" option keeps the API key in the
+  owner's browser only.)
 - The generated ADRs/requirements/milestones are docs-kit's **worked examples** —
   the project's real answers live in `PLAN-INTAKE.json`, and `AI-HANDOFF.md` tells
   a coding agent to rewrite the examples into the project's real artifacts
@@ -221,6 +231,45 @@ project-wizard/
   repo's root `docs-kit.js`. Refresh it with `cp ../Sequence/docs-kit.js
   lib/docs-kit.js` (adjust the path). The AI-handoff prompt lives in
   `handoffOf()` in `server.js`, so refreshing the kit never clobbers it.
+
+## Reverse-engineer from code ("Use an existing app to start")
+
+New projects start with a choice: **Start from scratch** (the wizard) or **Use
+an existing app**. The second path uploads an app's code and drafts a full
+intake (product, requirements, decisions, milestones, risks, non-functional) for
+the owner to **review and correct** instead of writing from scratch — so an
+existing Manus/other app becomes a reviewable plan.
+
+How it's wired (touch-points for future changes):
+
+- **Entry** — `newProject()` in `public/app.js` offers the two paths; "Use an
+  existing app" routes to `#/p/:id/import` → `importScreen()`.
+- **Upload** — code goes in via the same attachment store, but with relative
+  paths preserved (`POST …/attachments?path=`), so folders (`webkitdirectory`)
+  and `.zip`s keep their structure. The corpus builder expands `.zip`s with
+  `unzip`.
+- **Engine** — `lib/reverse-engineer.js`: `buildCorpus()` walks the upload
+  (skipping `node_modules`/`.git`/lockfiles/binaries, importance-ranked, char-
+  capped), `generateIntake()` calls Claude via **raw fetch** to `/v1/messages`
+  with **structured output** (`output_config.format` + `INTAKE_SCHEMA`) so the
+  result is schema-valid, and `applyIntake()` (in `server.js`) maps it into the
+  wizard's answers. No SDK dependency.
+- **The Claude API key** — entered in the import screen (password field), held
+  in the browser (optional "remember on this device" → `localStorage`), and sent
+  **per-request** to `POST …/generate-draft`. It is used only for that call and
+  **never written to disk on the server** (same trust model as the "Deploy now"
+  SSH password). A server-side `ANTHROPIC_API_KEY` env var is an optional
+  fallback for headless use; `docker-compose.yml` passes it through.
+- **No key → handoff** — `generate-draft` returns a reverse-engineering prompt
+  the owner runs against their code with a coding agent to produce a
+  `PLAN-INTAKE.json`, which they load via **Import a PLAN-INTAKE.json**
+  (`POST …/import-intake`). That import button works standalone too.
+- **Model & tuning** — defaults to `claude-opus-4-8` at `medium` effort; override
+  with `WIZARD_MODEL`. Corpus size cap: `WIZARD_CORPUS_CHARS`. File-type coverage:
+  the `TEXT_EXT` set in `lib/reverse-engineer.js`.
+
+Drafted projects carry a `draftFromCode` flag and show a "review and correct"
+banner in the wizard.
 
 ## Reference uploads (the "Reference" wizard step)
 

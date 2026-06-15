@@ -155,3 +155,29 @@ table.rows textarea.cell-ml{font-size:13.5px;padding:7px 9px;min-height:46px;lin
 .dform input{width:100%;}
 .dform .row2{display:flex;gap:10px;}.dform .row2>div{flex:1;}
 #d-out{display:none;max-height:200px;overflow:auto;background:#141416;border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:11px;line-height:1.45;margin-top:8px;white-space:pre-wrap;color:var(--mut);}
+
+/* new-project start choice */
+.start-choice{display:flex;flex-direction:column;gap:10px;}
+.choice{display:flex;align-items:center;gap:12px;text-align:left;background:var(--panel2);border:1px solid var(--line);border-radius:11px;padding:13px 14px;cursor:pointer;color:var(--text);}
+.choice:hover{border-color:var(--accent);}
+.choice .ic{flex:none;width:34px;height:34px;border-radius:9px;background:var(--panel);border:1px solid var(--line2);display:flex;align-items:center;justify-content:center;}
+.choice .ic svg{width:17px;height:17px;stroke:var(--accent);fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;}
+.choice .ct{display:flex;flex-direction:column;gap:2px;}
+.choice .ct b{font-size:14px;}
+.choice .ct span{font-size:12px;color:var(--muted);}
+
+/* import: uploaded-files summary */
+.up-card{margin-top:14px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px;}
+.up-head{font-size:13px;color:var(--text-dim,#C8C8C2);display:flex;align-items:center;gap:8px;}
+.up-list{margin:8px 0 0;padding-left:18px;font-size:12.5px;color:var(--muted);}
+.up-list li{margin:2px 0;}
+.up-list .dim,.dim{color:var(--dim);}
+.link-danger{margin-left:auto;background:none;border:none;color:var(--dim);cursor:pointer;font-size:12px;text-decoration:underline;}
+.link-danger:hover{color:var(--red);}
+
+/* import: api key + handoff */
+label.chk{display:flex;align-items:center;gap:7px;font-size:12.5px;letter-spacing:0;text-transform:none;color:var(--muted);margin:8px 0 4px;}
+label.chk input{width:auto;}
+a.hint{cursor:pointer;}
+a.hint:hover{color:var(--accent);}
+.ho-text{width:100%;min-height:160px;margin-top:10px;font:12px/1.5 ui-monospace,"SF Mono",Menlo,monospace;background:#141416;color:var(--text);border:1px solid var(--line);border-radius:8px;padding:10px 12px;resize:vertical;}

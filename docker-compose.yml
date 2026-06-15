@@ -9,6 +9,10 @@ services:
       - "4500:4500"          # host:container — reach it at http://<server-ip>:4500
     environment:
       - PORT=4500
+      # Optional: a server-side key enables "reverse-engineer with AI" without
+      # entering one in the GUI each time. Leave unset to require the GUI field.
+      # The wizard never writes a key to disk; a GUI-entered key is used per-request.
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
     volumes:
       - project-wizard-data:/app/data   # projects + generated trees persist here
 

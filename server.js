@@ -19,6 +19,7 @@ const { spawn, execFile } = require('child_process');
 const storage = require('./lib/storage');
 const staticSite = require('./lib/static-site');
 const deployBundle = require('./lib/deploy-bundle');
+const reverse = require('./lib/reverse-engineer');
 
 const app = express();
 const PORT = process.env.PORT || 4500;
@@ -132,10 +133,30 @@ function safeFileName(raw) {
   return n;
 }
 
+// Sanitize a RELATIVE path (for folder/codebase uploads) — each segment cleaned,
+// '..' and empty segments dropped, so it can never escape the attachments dir.
+function safeRelPath(raw) {
+  return String(raw || '').replace(/\\/g, '/').split('/')
+    .map((seg) => safeFileName(seg)).filter((seg) => seg && seg !== '.').join('/');
+}
+
+// List every uploaded file (recursively — folder/zip uploads nest), disk is the
+// source of truth. Returns relative paths with size + kind.
+function walkAttach(dir, rel, out) {
+  let entries;
+  try { entries = fs.readdirSync(path.join(dir, rel || ''), { withFileTypes: true }); } catch { return; }
+  for (const e of entries) {
+    if (e.name.endsWith('.tmp')) continue;
+    const rp = rel ? rel + '/' + e.name : e.name;
+    if (e.isDirectory()) walkAttach(dir, rp, out);
+    else if (e.isFile()) { let s = 0; try { s = fs.statSync(path.join(dir, rp)).size; } catch {} out.push({ name: rp, size: s, kind: kindOf(rp) }); }
+  }
+}
 function listAttachments(p) {
-  const atts = Array.isArray(p.attachments) ? p.attachments : [];
-  const dir = storage.attachmentsDir(p.id);
-  return atts.filter((a) => { try { return fs.statSync(path.join(dir, a.name)).isFile(); } catch { return false; } });
+  const out = [];
+  walkAttach(storage.attachmentsDir(p.id), '', out);
+  out.sort((a, b) => a.name.localeCompare(b.name));
+  return out;
 }
 
 // Mirror current attachments into <genDir>/reference/ (clears stale ones first).
@@ -146,11 +167,36 @@ function syncReferenceDir(p) {
   try { fs.rmSync(refDir, { recursive: true, force: true }); } catch {}
   const atts = listAttachments(p);
   if (!atts.length) return;
-  fs.mkdirSync(refDir, { recursive: true });
   const src = storage.attachmentsDir(p.id);
   for (const a of atts) {
-    try { fs.copyFileSync(path.join(src, a.name), path.join(refDir, a.name)); } catch {}
+    const dest = path.join(refDir, a.name);
+    try { fs.mkdirSync(path.dirname(dest), { recursive: true }); fs.copyFileSync(path.join(src, a.name), dest); } catch {}
   }
+}
+
+// Map a parsed intake (from the model, or an imported PLAN-INTAKE.json) into the
+// wizard's answers shape. Tables become rows; product fields merge in.
+function strOf(v) { return typeof v === 'string' ? v : (v == null ? '' : String(v)); }
+function rowsOf(list, keys) {
+  return (Array.isArray(list) ? list : []).map((r) => {
+    const o = {}; keys.forEach((k) => { o[k] = strOf(r && r[k]); }); return o;
+  }).filter((o) => Object.keys(o).some((k) => o[k].trim()));
+}
+function applyIntake(p, intake) {
+  intake = intake || {};
+  const a = p.answers || emptyAnswers();
+  a.product = a.product || {};
+  const prod = intake.product || {};
+  ['name', 'domain', 'oneliner', 'problem', 'users', 'differentiator', 'experience', 'success', 'notBuilding']
+    .forEach((k) => { if (strOf(prod[k]).trim()) a.product[k] = strOf(prod[k]); });
+  a.requirements = rowsOf(intake.requirements, ['title', 'priority', 'test']);
+  a.decisions = rowsOf(intake.decisions, ['concern', 'choice', 'why']);
+  a.milestones = rowsOf(intake.milestones, ['name', 'done', 'target']);
+  a.risks = rowsOf(intake.risks, ['risk', 'mitigation']);
+  a.scalability = rowsOf(intake.scalability, ['area', 'target', 'adr']);
+  a.requirements.forEach((r) => { if (['Must', 'Should', 'May', "Won't"].indexOf(r.priority) === -1) r.priority = 'Should'; });
+  if ((!p.name || p.name === 'Untitled project') && strOf(prod.name).trim()) p.name = strOf(prod.name).trim();
+  p.answers = a;
 }
 
 // Write the project's own intake + handoff (+ reference files) into a tree.
@@ -200,59 +246,117 @@ app.delete('/api/projects/:id', (req, res) => {
   res.json({ ok: true });
 });
 
-// ─── reference attachments: list / upload / delete ───────────────────────────
+// ─── reference / source attachments: list / upload / delete ──────────────────
 app.get('/api/projects/:id/attachments', (req, res) => {
   const p = storage.getProject(req.params.id);
   if (!p) return res.status(404).json({ error: 'not found' });
-  if (Array.isArray(p.attachments) && p.attachments.length !== listAttachments(p).length) {
-    p.attachments = listAttachments(p); storage.saveProject(p);
-  }
-  res.json({ attachments: listAttachments(p), maxBytes: MAX_ATTACH_BYTES });
+  const atts = listAttachments(p);
+  res.json({ attachments: atts, maxBytes: MAX_ATTACH_BYTES, totalBytes: atts.reduce((n, a) => n + a.size, 0) });
 });
 
-// Raw-body upload — one file per request, name via ?name=. Keeps the tool
-// dependency-light (no multipart parser): the browser POSTs the File as the body.
+// Raw-body upload — one file per request. ?name= = a single reference doc
+// (type allow-listed, flat). ?path= = a file within a folder/codebase upload
+// (relative path preserved, lenient — the corpus builder filters by type later).
+// Dependency-light: the browser POSTs the File as the body, no multipart parser.
 app.post('/api/projects/:id/attachments',
   express.raw({ type: () => true, limit: MAX_ATTACH_BYTES }),
   (req, res) => {
     const p = storage.getProject(req.params.id);
     if (!p) return res.status(404).json({ error: 'not found' });
-    const name = safeFileName(req.query.name);
-    if (!name) return res.status(400).json({ error: 'a valid filename is required' });
-    if (!ALLOWED_EXT.has(extOf(name))) {
-      return res.status(415).json({ error: 'unsupported file type “.' + (extOf(name) || '?') + '”. Allowed: documents (pdf, md, txt, docx, csv, json, images…) and code/archives (zip, tar, and common source files).' });
+    const usePath = typeof req.query.path === 'string' && req.query.path.length > 0;
+    const rel = usePath ? safeRelPath(req.query.path) : safeFileName(req.query.name);
+    if (!rel) return res.status(400).json({ error: 'a valid filename is required' });
+    if (!usePath && !ALLOWED_EXT.has(extOf(rel))) {
+      return res.status(415).json({ error: 'unsupported file type “.' + (extOf(rel) || '?') + '”. Allowed: documents (pdf, md, txt, docx, csv, json, images…) and code/archives (zip, tar, and common source files).' });
     }
     const buf = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
     if (!buf.length) return res.status(400).json({ error: 'empty file' });
 
     const dir = storage.attachmentsDir(p.id);
-    fs.mkdirSync(dir, { recursive: true });
+    const full = path.join(dir, rel);
+    if (!path.resolve(full).startsWith(path.resolve(dir) + path.sep)) return res.status(400).json({ error: 'bad path' });
+    fs.mkdirSync(path.dirname(full), { recursive: true });
     const tmp = path.join(dir, '.' + crypto.randomBytes(4).toString('hex') + '.tmp');
     try {
       fs.writeFileSync(tmp, buf);
-      fs.renameSync(tmp, path.join(dir, name));
+      fs.renameSync(tmp, full);
     } catch (e) {
       try { fs.rmSync(tmp, { force: true }); } catch {}
       return res.status(500).json({ error: 'could not store file' });
     }
 
-    p.attachments = (Array.isArray(p.attachments) ? p.attachments : []).filter((a) => a.name !== name);
-    p.attachments.push({ name, size: buf.length, kind: kindOf(name), uploadedAt: new Date().toISOString() });
+    p.attachments = listAttachments(p);
     storage.saveProject(p);
     writeAux(p, storage.generatedDir(p.id));        // keep an already-generated tree in sync
-    res.status(201).json({ ok: true, attachment: { name, size: buf.length, kind: kindOf(name) }, attachments: listAttachments(p) });
+    res.status(201).json({ ok: true, attachment: { name: rel, size: buf.length, kind: kindOf(rel) }, count: p.attachments.length });
   });
 
-app.delete('/api/projects/:id/attachments/:name', (req, res) => {
+// Delete one file (?name=<relative path>) or clear all (no name).
+app.delete('/api/projects/:id/attachments', (req, res) => {
   const p = storage.getProject(req.params.id);
   if (!p) return res.status(404).json({ error: 'not found' });
-  const name = safeFileName(req.params.name);
-  if (!name) return res.status(400).json({ error: 'bad name' });
-  try { fs.rmSync(path.join(storage.attachmentsDir(p.id), name), { force: true }); } catch {}
-  p.attachments = (Array.isArray(p.attachments) ? p.attachments : []).filter((a) => a.name !== name);
+  const dir = storage.attachmentsDir(p.id);
+  if (req.query.name) {
+    const rel = safeRelPath(req.query.name);
+    if (rel) { try { fs.rmSync(path.join(dir, rel), { force: true }); } catch {} }
+  } else {
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+  }
+  p.attachments = listAttachments(p);
   storage.saveProject(p);
   writeAux(p, storage.generatedDir(p.id));
   res.json({ ok: true, attachments: listAttachments(p) });
+});
+
+// ─── reverse-engineer an intake from uploaded code ───────────────────────────
+app.post('/api/projects/:id/generate-draft', async (req, res) => {
+  const p = storage.getProject(req.params.id);
+  if (!p) return res.status(404).json({ error: 'not found' });
+  let corpus;
+  try { corpus = reverse.buildCorpus(storage.attachmentsDir(p.id)); }
+  catch (e) { return res.status(500).json({ error: 'could not read the uploaded files: ' + (e.message || e) }); }
+  if (!corpus.includedCount) {
+    return res.status(400).json({ error: 'no readable source found — upload your app’s code (files, a folder, or a .zip) first' });
+  }
+  const apiKey = (req.body && req.body.apiKey) || '';
+  const hasKey = !!String(apiKey).trim() || reverse.serverKeyConfigured();
+  const meta = { fileCount: corpus.fileCount, includedCount: corpus.includedCount, truncated: corpus.truncated };
+
+  if (!hasKey) {
+    return res.json(Object.assign({ ok: true, mode: 'handoff', prompt: reverse.handoffPrompt(p.name, corpus) }, meta));
+  }
+  try {
+    const intake = await reverse.generateIntake(p.name, corpus, apiKey);
+    applyIntake(p, intake);
+    p.draftFromCode = true;
+    storage.saveProject(p);
+    res.json(Object.assign({ ok: true, mode: 'auto', model: reverse.MODEL, counts: {
+      requirements: p.answers.requirements.length,
+      decisions: p.answers.decisions.length,
+      milestones: p.answers.milestones.length,
+    } }, meta));
+  } catch (e) {
+    res.status(e.status || 500).json({ error: 'draft generation failed: ' + (e.message || 'unknown error') });
+  }
+});
+
+// Import a PLAN-INTAKE.json (e.g. produced by the handoff path) into a project.
+app.post('/api/projects/:id/import-intake', (req, res) => {
+  const p = storage.getProject(req.params.id);
+  if (!p) return res.status(404).json({ error: 'not found' });
+  const body = req.body || {};
+  const intake = body.intake !== undefined ? body.intake : body;
+  if (!intake || typeof intake !== 'object' || Array.isArray(intake)) {
+    return res.status(400).json({ error: 'expected a PLAN-INTAKE JSON object' });
+  }
+  const data = intake.answers ? intake.answers : intake;
+  if (!data.product && !Array.isArray(data.requirements)) {
+    return res.status(400).json({ error: 'that doesn’t look like a PLAN-INTAKE — expected product / requirements fields' });
+  }
+  applyIntake(p, data);
+  p.draftFromCode = true;
+  storage.saveProject(p);
+  res.json({ ok: true });
 });
 
 // ─── generate the doc structure via docs-kit ────────────────────────────────
@@ -457,6 +561,8 @@ app.get('/api/config', (req, res) => {
     hostIp: ip || null,
     portainerUrl: process.env.PORTAINER_URL || (ip ? `http://portainer.${ip}.nip.io/` : null),
     proxyUrl: process.env.PROXY_URL || (ip ? `http://${ip}:8080/dashboard/` : null),
+    aiServerKey: reverse.serverKeyConfigured(),   // a server-side ANTHROPIC_API_KEY is set (GUI can also supply one)
+    aiModel: reverse.MODEL,
   });
 });
 
@@ -471,6 +577,10 @@ app.use((err, req, res, next) => {
   res.status(err.status || 500).json({ error: String((err && err.message) || 'server error') });
 });
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log('project-wizard on http://localhost:' + PORT);
 });
+// Draft generation calls the Claude API and can take minutes on a large
+// codebase — don't let the server time out the request mid-analysis.
+server.requestTimeout = 600000;
+server.headersTimeout = 620000;

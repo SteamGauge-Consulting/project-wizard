@@ -141,6 +141,7 @@
     mount.innerHTML =
       '<div class="wiz-top"><div class="title" id="wiz-title"></div><div class="save" id="wiz-save"></div></div>' +
       '<a href="#/" class="hint">← all projects</a>' +
+      (project.draftFromCode ? '<div class="warn" style="margin:14px 0 0">✦ <b>Drafted from your uploaded app.</b> Review and correct each field — these are inferred from the code, not confirmed by you.</div>' : '') +
       '<div class="steps" id="wiz-steps"></div>' +
       '<div id="wiz-body"></div>' +
       '<div class="wiz-nav"><button class="btn ghost" id="wiz-back">← Back</button><button class="btn primary" id="wiz-next">Next →</button></div>';
@@ -227,7 +228,7 @@
         listEl.querySelectorAll('[data-del-att]').forEach(function (b) {
           b.addEventListener('click', function () {
             var nm = b.getAttribute('data-del-att');
-            fetch('/api/projects/' + project.id + '/attachments/' + encodeURIComponent(nm), { method: 'DELETE' })
+            fetch('/api/projects/' + project.id + '/attachments?name=' + encodeURIComponent(nm), { method: 'DELETE' })
               .then(function (r) { return r.json(); })
               .then(function (j) { drawList(j.attachments || []); });
           });
