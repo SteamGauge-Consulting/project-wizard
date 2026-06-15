@@ -428,20 +428,18 @@ app.post('/api/projects/:id/build-full', async (req, res) => {
   const intake = intakeOf(p);
   const docsDir = (p.answers && p.answers.integrations && p.answers.integrations.docsDir) || 'docs';
   const out = { ok: true };
-  let plan = null;
+  let plan = null, enrich = null, lr = null;
 
-  // 1. AI enrichment → re-render the docs richly + produce the governance plan.
-  //    Optional: skipped when no key is available (docs stay as clean tables),
-  //    so the Linear step below can still run on its own.
+  // 1. AI enrichment → produce the governance plan + rich doc content (Mermaid,
+  //    Given/When/Then, ADR bodies). Optional: skipped when no key is available
+  //    (docs stay as clean tables), so the Linear step below can still run.
   const apiKey = (b.apiKey && String(b.apiKey).trim()) || '';
   if (apiKey || enrichLib.aiEnabled()) {
     try {
       let corpus = null;
       try { corpus = reverse.buildCorpus(storage.attachmentsDir(p.id)); } catch (e) {}
-      const enrich = await enrichLib.enrich(intake, apiKey, corpus && corpus.includedCount ? corpus : null);
+      enrich = await enrichLib.enrich(intake, apiKey, corpus && corpus.includedCount ? corpus : null);
       plan = enrich.plan;
-      renderIntake.render(dir, intake, { docsDir, enrich });
-      writeAux(p, dir);
       out.enriched = true;
       out.counts = { requirements: (intake.requirements || []).length, decisions: (intake.decisions || []).length, milestones: (intake.milestones || []).length };
     } catch (e) {
@@ -449,15 +447,29 @@ app.post('/api/projects/:id/build-full', async (req, res) => {
     }
   }
 
-  // 2. Optional: create the Linear tracker (a brand-new project — never an existing one).
+  // 2. Optional: create the Linear tracker (a brand-new project — never an
+  //    existing one). Runs BEFORE the render so the Plan page can mirror the
+  //    live tracker (milestone roll-up + per-phase issue overview + live status).
   const linearKey = (b.linearKey && String(b.linearKey).trim()) || '';
   if (linearKey && b.teamId) {
     try {
-      const lr = await linear.createProjectWithIssues(linearKey, { teamId: b.teamId, name: p.name, intake, startDate: intake.startDate, plan });
+      lr = await linear.createProjectWithIssues(linearKey, { teamId: b.teamId, name: p.name, intake, startDate: intake.startDate, plan });
       out.linear = lr;
       p.linearUrl = lr.url;
+      p.linearProjectId = lr.projectId;
     } catch (e) {
       out.linearError = 'Linear: ' + (e.message || 'failed'); // non-fatal — docs still built
+    }
+  }
+
+  // 3. Re-render the docs from the intake with whatever we produced (enrichment
+  //    and/or the live Linear tracker). Skipped only when neither ran.
+  if (enrich || lr) {
+    try {
+      renderIntake.render(dir, intake, { docsDir, enrich, linear: lr });
+      writeAux(p, dir);
+    } catch (e) {
+      console.error('render-intake (build-full) failed:', e.message);
     }
   }
   p.enrichedAt = new Date().toISOString();
@@ -544,7 +556,7 @@ app.post('/api/projects/:id/deploy', (req, res) => {
   if (!b.host) return res.status(400).json({ ok: false, error: 'host is required' });
   if (!b.password) return res.status(400).json({ ok: false, error: 'SSH password is required — the wizard pushes from inside the container, so it needs the password (key auth isn’t wired here). You can still use “Download bundle” and run deploy.sh with your own key.' });
 
-  const params = { name: b.name || p.name, host: b.host, sshUser: b.user, sshPort: b.sshPort, port: b.port, hostname: b.hostname };
+  const params = { name: b.name || p.name, host: b.host, sshUser: b.user, sshPort: b.sshPort, port: b.port, hostname: b.hostname, linearKey: b.linearKey };
   const name = deployBundle.slugify(params.name);
   const user = (b.user || 'docker').trim();
   const host = String(b.host).trim();

@@ -75,11 +75,8 @@
       ['product.success', 'What does success look like in 6 months? (measurable if you can)', 'Daily active members, retention, time-to-value…', 'area'],
       ['product.notBuilding', 'Explicitly NOT building (the “won’t” list)', 'One per line — the agent defends this boundary against scope creep.', 'area'],
     ] },
-    { title: 'Integrations', hint: 'The non-secret values docs-kit and the docs pages need. Blank is fine — the export marks it as a setup step. API keys are never collected here. Point Linear at a NEW or dedicated project for this app — the agent creates this app’s milestones and issues there, and won’t touch an existing project that already has unrelated work.', fields: [
+    { title: 'Integrations', hint: 'The non-secret values docs-kit and the docs pages need. Blank is fine — the export marks it as a setup step. API keys are never collected here. You do NOT enter any Linear URLs or project IDs — on “Build plan” you just supply a Linear write key and pick the team, and the wizard creates a brand-new Linear project (named after this app) and wires its live status in automatically.', fields: [
       ['integrations.githubRepoUrl', 'GitHub repo URL', 'https://github.com/me/acme', 'text'],
-      ['integrations.linearWorkspaceUrl', 'Linear workspace URL', 'https://linear.app/acme', 'text'],
-      ['integrations.linearProjectUrl', 'Linear project URL', 'https://linear.app/acme/project/launch-…', 'text'],
-      ['integrations.linearProjectId', 'Linear project ID (UUID — powers live status)', '', 'text'],
       ['integrations.docsDir', 'Docs directory name', 'docs', 'text'],
     ], warn: '🔑 API keys stay out of this tool. The generated structure ships placeholders; pass keys to docs-kit on the CLI at deploy time.' },
   ];
@@ -486,6 +483,9 @@
           if (b && !b.ok) throw new Error(b.j.error || 'AI build failed');
           window.__bp_linear = b && b.j && b.j.linear;
           if (!host) { return { ok: true, j: { noDeploy: true } }; }
+          // If a Linear tracker was created, hand the key to the container so its
+          // /docs plan page shows live status (the project id is baked into serve-docs.js).
+          if (window.__bp_linear && linKey) deploy.linearKey = linKey;
           step('3/3 · Deploying to ' + esc(host) + '… (first build can take a minute)');
           return P('/api/projects/' + project.id + '/deploy', deploy);
         }).then(function (d) {
