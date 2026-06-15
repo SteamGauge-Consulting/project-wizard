@@ -324,7 +324,7 @@
         '<div class="sub">' + files.filter(function (f) { return f.type === 'file'; }).length + ' files · generated ' + fmtDate(p.generatedAt) + '</div></div>' +
         '<div style="display:flex;gap:10px;flex-wrap:wrap">' +
         '<button class="btn sm primary" id="build-btn">' + ic('sparkles') + 'Build full docs + Linear</button>' +
-        '<button class="btn sm" id="export-btn">' + ic('download') + 'Export…</button>' +
+        '<button class="btn sm" id="export-btn">' + ic('download') + 'Export / Deploy…</button>' +
         '<button class="btn sm" id="regen">' + ic('refresh') + 'Re-run wizard</button></div></div>' +
         (p.enrichedAt ? '<div class="ok-note">✦ AI-built ' + fmtDate(p.enrichedAt) + (p.linearUrl ? ' · <a href="' + esc(p.linearUrl) + '" target="_blank">Linear project ↗</a>' : '') + '</div>' : '') +
         '<div class="browser"><div class="filetree" id="tree"></div>' +
@@ -369,7 +369,7 @@
     try { savedKey = localStorage.getItem(KEY_LS) || ''; } catch (e) {}
     var bg = document.createElement('div'); bg.className = 'modal-bg';
     bg.innerHTML = '<div class="modal exp-modal"><h3>Build full docs + Linear</h3>' +
-      '<p class="hint">AI rewrites the docs with a Mermaid architecture diagram, a Gantt, and Given/When/Then acceptance criteria — and, optionally, creates a brand-new Linear project with milestones + issues from your intake.</p>' +
+      '<p class="hint">AI rewrites the docs <b>in the wizard’s copy</b> — a Mermaid architecture diagram, a Gantt, and Given/When/Then acceptance criteria — and, optionally, creates a brand-new Linear project with milestones + issues. <b>This does not deploy</b>; afterward use <b>Export / Deploy</b> to push the updated docs to your Docker host. Requires a Claude API key.</p>' +
       '<div class="dform">' +
         '<label>Claude API key</label><input type="password" id="b-ai" placeholder="sk-ant-… (or leave blank if a server key is set)" value="' + esc(savedKey) + '" autocomplete="off" />' +
         '<label class="chk"><input type="checkbox" id="b-remember"' + (savedKey ? ' checked' : '') + ' /> Remember on this device</label>' +
@@ -408,17 +408,18 @@
       try { if (bg.querySelector('#b-remember').checked && key) localStorage.setItem(KEY_LS, key); else localStorage.removeItem(KEY_LS); } catch (e) {}
       btn.disabled = true;
       status.textContent = 'building with AI… (can take a minute)' + (linKey && teamId ? ' then creating Linear issues' : '');
+      status.style.color = '';
       api('/api/projects/' + id + '/build-full', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ apiKey: key, linearKey: linKey, teamId: teamId }) })
         .then(function (res) {
           btn.disabled = false;
           var j = res.j || {};
-          if (!res.ok) { status.textContent = '✗ ' + (j.error || 'failed'); return; }
-          var msg = 'Docs rebuilt with AI';
-          if (j.linear) msg += ' · Linear: ' + j.linear.counts.issues + ' issues in ' + j.linear.counts.milestones + ' milestones';
+          if (!res.ok) { status.style.color = 'var(--red)'; status.textContent = '✗ ' + (j.error || 'failed'); return; }
+          var msg = 'Docs rebuilt in the wizard';
+          if (j.linear) msg += ' · Linear: ' + j.linear.counts.issues + ' issues, ' + j.linear.counts.milestones + ' milestones';
           else if (j.linearError) msg += ' · ' + j.linearError;
-          toast(msg);
+          toast(msg + ' — now Export / Deploy to push it live');
           bg.remove(); docs(id);
-        }).catch(function (e) { btn.disabled = false; status.textContent = '✗ ' + e.message; });
+        }).catch(function (e) { btn.disabled = false; status.style.color = 'var(--red)'; status.textContent = '✗ ' + e.message; });
     });
   }
 

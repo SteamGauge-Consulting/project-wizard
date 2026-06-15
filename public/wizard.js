@@ -302,11 +302,11 @@
     }
 
     function drawRows(t, host, spec) {
-      var html = '<table class="rows"><thead><tr>';
+      var html = '<table class="rows"><thead><tr><th class="grip-h"></th>';
       spec.cols.forEach(function (c) { html += '<th style="width:' + c.w + '">' + c.th + '</th>'; });
       html += '<th></th></tr></thead><tbody>';
       answers[t].forEach(function (row, i) {
-        html += '<tr>';
+        html += '<tr data-row="' + i + '"><td class="grip" draggable="true" title="drag to reorder">⠿</td>';
         spec.cols.forEach(function (c) {
           html += '<td>';
           if (c.sel) {
@@ -339,6 +339,30 @@
       });
       host.querySelector('[data-add]').addEventListener('click', function () { answers[t].push(emptyRow(t)); scheduleSave(); drawRows(t, host, spec); });
       host.querySelector('[data-examples]').addEventListener('click', function () { loadExamples(t); drawRows(t, host, spec); });
+
+      // Drag-to-reorder rows by the grip handle.
+      var dragFrom = null;
+      host.querySelectorAll('tr[data-row]').forEach(function (tr) {
+        var grip = tr.querySelector('.grip');
+        if (grip) grip.addEventListener('dragstart', function (e) {
+          dragFrom = +tr.getAttribute('data-row');
+          e.dataTransfer.effectAllowed = 'move';
+          try { e.dataTransfer.setData('text/plain', String(dragFrom)); } catch (x) {}
+          tr.classList.add('dragging');
+        });
+        if (grip) grip.addEventListener('dragend', function () { tr.classList.remove('dragging'); host.querySelectorAll('tr.drop-to').forEach(function (r) { r.classList.remove('drop-to'); }); });
+        tr.addEventListener('dragover', function (e) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; tr.classList.add('drop-to'); });
+        tr.addEventListener('dragleave', function () { tr.classList.remove('drop-to'); });
+        tr.addEventListener('drop', function (e) {
+          e.preventDefault();
+          var to = +tr.getAttribute('data-row');
+          if (dragFrom === null || dragFrom === to) return;
+          var moved = answers[t].splice(dragFrom, 1)[0];
+          answers[t].splice(to, 0, moved);
+          dragFrom = null;
+          scheduleSave(); drawRows(t, host, spec);
+        });
+      });
     }
 
     function renderGenerate() {

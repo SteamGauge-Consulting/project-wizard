@@ -186,3 +186,10 @@ a.hint:hover{color:var(--accent);}
 .ok-note{margin:0 0 14px;font-size:13px;color:var(--accent-br,#C0DD97);}
 .dform select{width:100%;background:var(--panel2);border:1px solid var(--line);border-radius:8px;color:var(--text);padding:9px 11px;font:14px/1.4 inherit;}
 .dform select:disabled{color:var(--dim);}
+
+/* drag-to-reorder rows */
+table.rows th.grip-h{width:22px;}
+table.rows td.grip{width:22px;text-align:center;color:var(--dim);cursor:grab;user-select:none;font-size:14px;padding-top:11px;}
+table.rows td.grip:active{cursor:grabbing;}
+table.rows tr.dragging{opacity:.45;}
+table.rows tr.drop-to td{border-top:2px solid var(--accent);}
