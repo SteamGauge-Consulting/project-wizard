@@ -271,6 +271,33 @@ How it's wired (touch-points for future changes):
 Drafted projects carry a `draftFromCode` flag and show a "review and correct"
 banner in the wizard.
 
+## Stage 3 — AI build + Linear tracker ("Build full docs + Linear")
+
+After **Generate**, the generated-docs view has a **Build full docs + Linear**
+button. It takes the project from a clean scaffold to a rich, project-specific
+doc set — and optionally stands up its tracker:
+
+- **AI enrichment** (`lib/enrich.js`) — one structured-output Claude call turns
+  the intake into a **Mermaid architecture diagram**, a **Mermaid Gantt**, one
+  **Given/When/Then** acceptance criterion per requirement, and full **ADR
+  bodies** (context / trade-off / revisit). `render-intake.js` injects these into
+  `architecture.html` (diagram), `plan.html` (Gantt), `REQUIREMENTS.md` (G/W/T),
+  and `adr/*.md` — Mermaid renders client-side via the CDN script the pages now
+  carry. Without enrichment the pages stay as clean deterministic tables.
+- **Linear tracker** (`lib/linear.js`, optional) — with a Linear API key + team,
+  it creates a **brand-new** Linear project, milestones from the intake, and one
+  issue per requirement (priority + "how you'd test it" in the body), linked to a
+  milestone. **Safety: it only ever creates a new project — it never writes into
+  an existing one**, so it can't pollute a tracker that already holds work.
+- **Keys** — the Claude key (reused from the import screen) and the Linear key
+  are entered in the GUI, sent per-request, and **never stored on the server**.
+- **Endpoints** — `POST /api/linear/teams` (team picker), `POST
+  /api/projects/:id/build-full` (`{apiKey, linearKey?, teamId?}`).
+
+The generated bundle is just files, so you can also point a **Claude Code
+session** at the docs folder afterward (via the `AI-HANDOFF.md` prompt) to
+iterate further — the wizard gives the rich starting point, the session refines.
+
 ## Reference uploads (the "Reference" wizard step)
 
 Owners can attach supporting material — PDFs/docs and **existing-codebase

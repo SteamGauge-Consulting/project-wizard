@@ -21,6 +21,8 @@ const staticSite = require('./lib/static-site');
 const deployBundle = require('./lib/deploy-bundle');
 const reverse = require('./lib/reverse-engineer');
 const renderIntake = require('./lib/render-intake');
+const enrichLib = require('./lib/enrich');
+const linear = require('./lib/linear');
 
 const app = express();
 const PORT = process.env.PORT || 4500;
@@ -400,6 +402,56 @@ app.post('/api/projects/:id/generate', (req, res) => {
     storage.saveProject(p);
     res.json({ ok: true, project: summarize(p), fileCount: files.length });
   });
+});
+
+// ─── Stage 3: AI build (rich docs) + Linear tracker ──────────────────────────
+// List Linear teams for the GUI picker (also validates the key). POST so the
+// key isn't logged in a URL.
+app.post('/api/linear/teams', async (req, res) => {
+  const key = (req.body && req.body.key && String(req.body.key).trim()) || '';
+  if (!key) return res.status(400).json({ error: 'a Linear API key is required' });
+  try { res.json({ ok: true, teams: await linear.listTeams(key) }); }
+  catch (e) { res.status(e.status || 500).json({ error: 'Linear: ' + (e.message || 'request failed') }); }
+});
+
+// Enrich the generated docs with AI (Mermaid diagrams, Given/When/Then, ADR
+// bodies) and — if a Linear key + team are supplied — create a brand-new Linear
+// project with milestones + issues from the intake.
+app.post('/api/projects/:id/build-full', async (req, res) => {
+  const p = storage.getProject(req.params.id);
+  if (!p) return res.status(404).json({ error: 'not found' });
+  const dir = storage.generatedDir(p.id);
+  if (!fs.existsSync(dir)) return res.status(400).json({ error: 'generate the doc structure first, then build full docs' });
+
+  const b = req.body || {};
+  const intake = intakeOf(p);
+  const out = { ok: true };
+
+  // 1. AI enrichment → re-render the docs richly.
+  try {
+    const enrich = await enrichLib.enrich(intake, b.apiKey);
+    renderIntake.render(dir, intake, { docsDir: (p.answers && p.answers.integrations && p.answers.integrations.docsDir) || 'docs', enrich });
+    writeAux(p, dir);
+    out.enriched = true;
+    out.counts = { requirements: (intake.requirements || []).length, decisions: (intake.decisions || []).length, milestones: (intake.milestones || []).length };
+  } catch (e) {
+    return res.status(e.status || 500).json({ error: 'AI build failed: ' + (e.message || 'unknown error') });
+  }
+
+  // 2. Optional: create the Linear tracker (a brand-new project — never an existing one).
+  const linearKey = (b.linearKey && String(b.linearKey).trim()) || '';
+  if (linearKey && b.teamId) {
+    try {
+      const lr = await linear.createProjectWithIssues(linearKey, { teamId: b.teamId, name: p.name, intake });
+      out.linear = lr;
+      p.linearUrl = lr.url;
+    } catch (e) {
+      out.linearError = 'Linear: ' + (e.message || 'failed'); // non-fatal — docs still built
+    }
+  }
+  p.enrichedAt = new Date().toISOString();
+  storage.saveProject(p);
+  res.json(out);
 });
 
 // ─── browse / download the generated structure ──────────────────────────────

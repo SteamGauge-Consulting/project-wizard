@@ -323,12 +323,15 @@
         '<div class="docs-head"><div><h1>' + esc(p.name) + '</h1>' +
         '<div class="sub">' + files.filter(function (f) { return f.type === 'file'; }).length + ' files · generated ' + fmtDate(p.generatedAt) + '</div></div>' +
         '<div style="display:flex;gap:10px;flex-wrap:wrap">' +
-        '<button class="btn sm primary" id="export-btn">' + ic('download') + 'Export…</button>' +
+        '<button class="btn sm primary" id="build-btn">' + ic('sparkles') + 'Build full docs + Linear</button>' +
+        '<button class="btn sm" id="export-btn">' + ic('download') + 'Export…</button>' +
         '<button class="btn sm" id="regen">' + ic('refresh') + 'Re-run wizard</button></div></div>' +
+        (p.enrichedAt ? '<div class="ok-note">✦ AI-built ' + fmtDate(p.enrichedAt) + (p.linearUrl ? ' · <a href="' + esc(p.linearUrl) + '" target="_blank">Linear project ↗</a>' : '') + '</div>' : '') +
         '<div class="browser"><div class="filetree" id="tree"></div>' +
         '<div class="viewer" id="viewer"><div class="placeholder">Select a file to view it.</div></div></div>';
       app.querySelector('#regen').addEventListener('click', function () { location.hash = '#/p/' + id + '/edit'; });
       app.querySelector('#export-btn').addEventListener('click', function () { exportSheet(id); });
+      app.querySelector('#build-btn').addEventListener('click', function () { buildSheet(id); });
 
       var tree = app.querySelector('#tree');
       tree.innerHTML = files.map(function (f) {
@@ -359,6 +362,66 @@
   }
 
   // ─── export sheet ──────────────────────────────────────────────────────────
+  // ─── Stage 3: AI build + Linear ──────────────────────────────────────────
+  function buildSheet(id) {
+    var KEY_LS = 'pw_anthropic_key';
+    var savedKey = '';
+    try { savedKey = localStorage.getItem(KEY_LS) || ''; } catch (e) {}
+    var bg = document.createElement('div'); bg.className = 'modal-bg';
+    bg.innerHTML = '<div class="modal exp-modal"><h3>Build full docs + Linear</h3>' +
+      '<p class="hint">AI rewrites the docs with a Mermaid architecture diagram, a Gantt, and Given/When/Then acceptance criteria — and, optionally, creates a brand-new Linear project with milestones + issues from your intake.</p>' +
+      '<div class="dform">' +
+        '<label>Claude API key</label><input type="password" id="b-ai" placeholder="sk-ant-… (or leave blank if a server key is set)" value="' + esc(savedKey) + '" autocomplete="off" />' +
+        '<label class="chk"><input type="checkbox" id="b-remember"' + (savedKey ? ' checked' : '') + ' /> Remember on this device</label>' +
+        '<hr style="border:none;border-top:1px solid var(--line);margin:14px 0" />' +
+        '<label>Linear API key <span style="text-transform:none;letter-spacing:0">(optional — to create the tracker)</span></label>' +
+        '<div class="row2" style="align-items:flex-end"><div style="flex:2"><input type="password" id="b-lin" placeholder="lin_api_… (write access)" autocomplete="off" /></div>' +
+        '<div style="flex:1"><button class="btn sm" id="b-teams">Load teams</button></div></div>' +
+        '<label>Team</label><select id="b-team" disabled><option value="">— enter a key, then Load teams —</option></select>' +
+        '<div class="hint">Keys are used per-request and never stored on the server. The tracker is always a <b>new</b> project — it never writes into an existing one.</div>' +
+        '<div style="display:flex;gap:8px;margin-top:14px;align-items:center"><button class="btn sm primary" id="b-go">' + ic('sparkles') + 'Build</button>' +
+        '<span class="hint" id="b-status"></span></div>' +
+      '</div>' +
+      '<div class="row"><button class="btn" id="b-close">Close</button></div></div>';
+    document.body.appendChild(bg);
+    bg.addEventListener('click', function (e) { if (e.target === bg) bg.remove(); });
+    bg.querySelector('#b-close').addEventListener('click', function () { bg.remove(); });
+    var status = bg.querySelector('#b-status'), sel = bg.querySelector('#b-team');
+
+    bg.querySelector('#b-teams').addEventListener('click', function () {
+      var k = bg.querySelector('#b-lin').value.trim();
+      if (!k) { status.textContent = 'enter a Linear key first'; return; }
+      status.textContent = 'loading teams…';
+      api('/api/linear/teams', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ key: k }) })
+        .then(function (res) {
+          if (!res.ok) { status.textContent = '✗ ' + (res.j.error || 'failed'); return; }
+          status.textContent = '';
+          sel.disabled = false;
+          sel.innerHTML = '<option value="">— pick a team —</option>' +
+            res.j.teams.map(function (t) { return '<option value="' + esc(t.id) + '">' + esc(t.name) + ' (' + esc(t.key) + ')</option>'; }).join('');
+        }).catch(function (e) { status.textContent = '✗ ' + e.message; });
+    });
+
+    bg.querySelector('#b-go').addEventListener('click', function () {
+      var btn = this; var key = bg.querySelector('#b-ai').value.trim();
+      var linKey = bg.querySelector('#b-lin').value.trim(), teamId = sel.value;
+      try { if (bg.querySelector('#b-remember').checked && key) localStorage.setItem(KEY_LS, key); else localStorage.removeItem(KEY_LS); } catch (e) {}
+      btn.disabled = true;
+      status.textContent = 'building with AI… (can take a minute)' + (linKey && teamId ? ' then creating Linear issues' : '');
+      api('/api/projects/' + id + '/build-full', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ apiKey: key, linearKey: linKey, teamId: teamId }) })
+        .then(function (res) {
+          btn.disabled = false;
+          var j = res.j || {};
+          if (!res.ok) { status.textContent = '✗ ' + (j.error || 'failed'); return; }
+          var msg = 'Docs rebuilt with AI';
+          if (j.linear) msg += ' · Linear: ' + j.linear.counts.issues + ' issues in ' + j.linear.counts.milestones + ' milestones';
+          else if (j.linearError) msg += ' · ' + j.linearError;
+          toast(msg);
+          bg.remove(); docs(id);
+        }).catch(function (e) { btn.disabled = false; status.textContent = '✗ ' + e.message; });
+    });
+  }
+
   function exportSheet(id) {
     var bg = document.createElement('div'); bg.className = 'modal-bg';
     bg.innerHTML = '<div class="modal exp-modal"><h3>Export</h3>' +
