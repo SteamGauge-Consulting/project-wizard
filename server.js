@@ -20,6 +20,7 @@ const storage = require('./lib/storage');
 const staticSite = require('./lib/static-site');
 const deployBundle = require('./lib/deploy-bundle');
 const reverse = require('./lib/reverse-engineer');
+const renderIntake = require('./lib/render-intake');
 
 const app = express();
 const PORT = process.env.PORT || 4500;
@@ -384,6 +385,11 @@ app.post('/api/projects/:id/generate', (req, res) => {
     if (err) {
       return res.status(500).json({ error: 'generation failed', detail: String(stderr || err.message).slice(0, 500) });
     }
+    // Replace the donor's example pages with THIS project's content (from the
+    // intake), so a generated/deployed site shows only the wizard's project.
+    try { renderIntake.render(dir, intakeOf(p), { docsDir: integ.docsDir || 'docs' }); }
+    catch (e) { console.error('render-intake failed (non-fatal):', e.message); }
+
     // Drop the project's own intake + handoff + reference files into the tree.
     writeAux(p, dir);
 
