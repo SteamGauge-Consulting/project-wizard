@@ -50,10 +50,16 @@ main{max-width:1040px;margin:0 auto;padding:30px 22px 90px;}
 .pill{font-size:11px;letter-spacing:.04em;text-transform:uppercase;border-radius:999px;padding:3px 9px;border:1px solid var(--line2);}
 .pill.draft{color:var(--amber);border-color:rgba(224,168,72,.4);}
 .pill.generated{color:var(--accent);border-color:rgba(151,196,89,.4);}
+.pill.live{color:var(--accent);border-color:rgba(151,196,89,.55);background:rgba(151,196,89,.12);}
 .tile .del{position:absolute;top:12px;right:12px;width:24px;height:24px;border-radius:7px;border:1px solid transparent;
   background:none;color:var(--dim);cursor:pointer;font-size:15px;line-height:1;opacity:0;}
 .tile:hover .del{opacity:1;}
 .tile .del:hover{color:var(--red);border-color:var(--red);}
+.tile .manage{position:absolute;top:12px;right:42px;width:24px;height:24px;border-radius:7px;border:1px solid transparent;
+  background:none;color:var(--dim);cursor:pointer;font-size:14px;line-height:1;opacity:0;}
+.tile:hover .manage{opacity:1;}
+.tile .manage:hover{color:var(--accent);border-color:var(--accent);}
+.tile[data-deploy]:not([data-deploy=""]){cursor:pointer;}
 
 .tile.new{align-items:center;justify-content:center;border-style:dashed;color:var(--muted);text-align:center;}
 .tile.new:hover{color:var(--accent);}

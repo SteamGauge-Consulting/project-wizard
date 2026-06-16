@@ -92,7 +92,12 @@
       app.querySelectorAll('.tile[data-id]').forEach(function (el) {
         el.addEventListener('click', function (e) {
           if (e.target.closest('.del')) return;
-          var id = el.getAttribute('data-id'), status = el.getAttribute('data-status');
+          var id = el.getAttribute('data-id'), status = el.getAttribute('data-status'), deploy = el.getAttribute('data-deploy');
+          // The ⚙ on a deployed tile opens the internal manage/re-deploy view.
+          if (e.target.closest('.manage')) { location.hash = '#/p/' + id + '/docs'; return; }
+          // A deployed project's card deep-links to its LIVE /docs — edit & code
+          // tools now live under the hamburger menu on that deployed page.
+          if (deploy) { window.open(deploy, '_blank', 'noopener'); return; }
           location.hash = status === 'generated' ? '#/p/' + id + '/docs' : '#/p/' + id + '/edit';
         });
         var del = el.querySelector('.del');
@@ -105,12 +110,17 @@
   }
 
   function tileHtml(p) {
-    return '<div class="tile" data-id="' + p.id + '" data-status="' + p.status + '" data-name="' + esc(p.name) + '">' +
+    var live = p.deployUrl ? esc(p.deployUrl) : '';
+    return '<div class="tile" data-id="' + p.id + '" data-status="' + p.status + '" data-name="' + esc(p.name) + '" data-deploy="' + live + '">' +
       '<button class="del" title="delete">×</button>' +
+      (live ? '<button class="manage" title="manage / re-deploy">⚙</button>' : '') +
       '<div class="name">' + esc(p.name) + '</div>' +
       '<div class="one">' + (esc(p.oneliner) || '<span style="color:var(--dim)">no description yet</span>') + '</div>' +
-      '<div class="meta"><span class="pill ' + p.status + '">' + (p.status === 'generated' ? 'generated' : 'draft') + '</span>' +
-      (p.status === 'generated' ? '<span>' + p.fileCount + ' files · ' + esc(p.docsDir) + '/</span>' : '<span>updated ' + fmtDate(p.updatedAt) + '</span>') +
+      '<div class="meta">' +
+      (live
+        ? '<span class="pill live" title="' + live + '">live</span><span>open docs ↗</span>'
+        : '<span class="pill ' + p.status + '">' + (p.status === 'generated' ? 'generated' : 'draft') + '</span>' +
+          (p.status === 'generated' ? '<span>' + p.fileCount + ' files · ' + esc(p.docsDir) + '/</span>' : '<span>updated ' + fmtDate(p.updatedAt) + '</span>')) +
       '</div></div>';
   }
 
