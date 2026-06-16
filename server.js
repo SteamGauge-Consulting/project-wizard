@@ -22,6 +22,7 @@ const deployBundle = require('./lib/deploy-bundle');
 const reverse = require('./lib/reverse-engineer');
 const renderIntake = require('./lib/render-intake');
 const enrichLib = require('./lib/enrich');
+const assessLib = require('./lib/assess');
 const linear = require('./lib/linear');
 
 const app = express();
@@ -35,6 +36,15 @@ app.use(express.static(path.join(__dirname, 'public')));
 const emptyAnswers = () => ({
   product: {}, integrations: {}, requirements: [], decisions: [], milestones: [], risks: [], scalability: [],
 });
+
+// The wizard's own base URL, from the incoming request — used to bake an
+// "✎ Edit in wizard" deep-link into the deployed docs (the living-docs round-trip).
+function wizardEditUrl(req, id) {
+  const host = req.headers && req.headers.host;
+  if (!host) return '';
+  const proto = (req.headers['x-forwarded-proto'] || req.protocol || 'http').split(',')[0].trim();
+  return proto + '://' + host + '/#/p/' + id + '/docs';
+}
 
 function summarize(p) {
   return {
@@ -455,6 +465,7 @@ app.post('/api/projects/:id/build-full', async (req, res) => {
     try {
       lr = await linear.createProjectWithIssues(linearKey, { teamId: b.teamId, name: p.name, intake, startDate: intake.startDate, plan });
       out.linear = lr;
+      p.linear = lr;                  // persisted so apply-changes can re-render the Plan overview
       p.linearUrl = lr.url;
       p.linearProjectId = lr.projectId;
     } catch (e) {
@@ -466,15 +477,175 @@ app.post('/api/projects/:id/build-full', async (req, res) => {
   //    and/or the live Linear tracker). Skipped only when neither ran.
   if (enrich || lr) {
     try {
-      renderIntake.render(dir, intake, { docsDir, enrich, linear: lr });
+      renderIntake.render(dir, intake, { docsDir, enrich, linear: lr, wizardEditUrl: wizardEditUrl(req, p.id) });
       writeAux(p, dir);
     } catch (e) {
       console.error('render-intake (build-full) failed:', e.message);
     }
   }
+  // Snapshot this as the live BASELINE for future "Assess Changes" diffs, and
+  // remember the last enrichment so apply-changes can re-render with diagrams.
+  if (enrich) p.lastEnrich = enrich;
+  p.baseline = intake;
   p.enrichedAt = new Date().toISOString();
   storage.saveProject(p);
   res.json(out);
+});
+
+// ─── living docs: Edit → Assess Changes → accept/revert → apply ──────────────
+// Build the {baseline, proposed, docDiff, linearIssues, corpus} for an assess
+// run and turn the AI result into a flat list of accept/revert change units.
+function buildChangeUnits(diff, ai) {
+  const units = [];
+  const impactBySection = {};
+  (ai.sectionImpacts || []).forEach((s) => { impactBySection[s.section] = s.impact; });
+  diff.forEach((d, i) => {
+    units.push({
+      id: 'doc-' + i, group: 'doc', section: d.section,
+      added: d.added || [], removed: d.removed || [], modified: d.modified || [], scalars: d.scalars || [],
+      impact: impactBySection[d.section] || '',
+    });
+  });
+  (ai.linearActions || []).forEach((a, i) => units.push(Object.assign({ id: 'lin-' + i, group: 'linear' }, a)));
+  (ai.affectedClosed || []).forEach((a, i) => units.push(Object.assign({ id: 'closed-' + i, group: 'affected-closed' }, a)));
+  (ai.codeImpacts || []).forEach((a, i) => units.push(Object.assign({ id: 'code-' + i, group: 'code' }, a)));
+  return units;
+}
+
+// Assess: diff the docs, fetch the live tracker, run the AI impact analysis.
+// Saves NOTHING — returns the change set for the accept/revert popup.
+app.post('/api/projects/:id/assess', async (req, res) => {
+  const p = storage.getProject(req.params.id);
+  if (!p) return res.status(404).json({ error: 'not found' });
+  const b = req.body || {};
+  const proposed = b.proposed && typeof b.proposed === 'object' ? b.proposed : null;
+  if (!proposed) return res.status(400).json({ error: 'no proposed edits supplied' });
+
+  // Code-impact requires the current codebase — hard gate (per the chosen design).
+  let corpus = null;
+  try { corpus = reverse.buildCorpus(storage.attachmentsDir(p.id)); } catch (e) {}
+  if (!corpus || !corpus.includedCount) {
+    return res.status(400).json({ error: 'Attach the current codebase first', code: 'no_corpus',
+      detail: 'Assess Changes analyzes code impact against the real source, so it needs a code/zip upload in this project’s reference files. Add one, then assess.' });
+  }
+
+  const baseline = p.baseline || intakeOf(p);
+  const docDiff = assessLib.diffIntake(baseline, proposed);
+  if (!docDiff.length) return res.json({ ok: true, empty: true, message: 'No changes to assess — the docs match the live baseline.' });
+
+  const linearKey = (b.linearKey && String(b.linearKey).trim()) || '';
+  let linearIssues = [], linearMeta = null;
+  if (p.linearProjectId && linearKey) {
+    try { linearMeta = await linear.loadProject(linearKey, p.linearProjectId); linearIssues = linearMeta.issues; }
+    catch (e) { /* assess can still run without the live tracker */ }
+  }
+
+  const apiKey = (b.apiKey && String(b.apiKey).trim()) || '';
+  let ai;
+  try {
+    ai = await assessLib.assess({ baseline, proposed, docDiff, linearIssues, corpus }, apiKey);
+  } catch (e) {
+    return res.status(e.status || 500).json({ error: 'Assessment failed: ' + (e.message || 'unknown error') });
+  }
+
+  res.json({
+    ok: true, summary: ai.summary,
+    units: buildChangeUnits(docDiff, ai),
+    hasLinear: !!(p.linearProjectId && linearKey),
+    corpus: { files: corpus.fileCount, included: corpus.includedCount },
+  });
+});
+
+// Apply: take the accepted change-unit ids + the proposed intake, assign a
+// Change ID, merge accepted doc sections, re-render, run accepted Linear
+// actions (each commenting the Change ID), and advance the baseline.
+app.post('/api/projects/:id/apply-changes', async (req, res) => {
+  const p = storage.getProject(req.params.id);
+  if (!p) return res.status(404).json({ error: 'not found' });
+  const b = req.body || {};
+  const proposed = b.proposed && typeof b.proposed === 'object' ? b.proposed : null;
+  const units = Array.isArray(b.units) ? b.units : null;
+  const accepted = new Set(Array.isArray(b.accepted) ? b.accepted : []);
+  if (!proposed || !units) return res.status(400).json({ error: 'proposed edits and the change set are required' });
+
+  const changeId = 'CHG-' + (p.changeSeq = (p.changeSeq || 0) + 1);
+  const acceptedUnits = units.filter((u) => accepted.has(u.id));
+  const docsDir = (p.answers && p.answers.integrations && p.answers.integrations.docsDir) || 'docs';
+  const applied = { docSections: [], linear: [], affectedClosed: [], code: [] };
+  const errors = [];
+
+  // 1. Merge accepted DOC sections into the project's answers (reverted sections
+  //    keep their baseline values). Tables/scalars copied wholesale per section.
+  p.answers = p.answers || emptyAnswers();
+  for (const u of acceptedUnits) {
+    if (u.group !== 'doc') continue;
+    if (u.section === 'product') {
+      if (proposed.product) p.answers.product = proposed.product;
+      if ('startDate' in proposed) p.answers.startDate = proposed.startDate;
+    } else if (proposed[u.section] !== undefined) {
+      p.answers[u.section] = proposed[u.section];
+    }
+    applied.docSections.push(u.section);
+  }
+
+  // 2. Re-render the docs from the merged intake. Re-enrich when a Claude key is
+  //    present (refreshes diagrams + acceptance criteria for the new content),
+  //    else reuse the last enrichment. Reuse the live Linear structure if any.
+  const mergedIntake = intakeOf(p);
+  const dir = storage.generatedDir(p.id);
+  if (fs.existsSync(dir)) {
+    let enrich = p.lastEnrich || null;
+    const apiKey = (b.apiKey && String(b.apiKey).trim()) || '';
+    if (applied.docSections.length && (apiKey || enrichLib.aiEnabled())) {
+      try {
+        let corpus = null; try { corpus = reverse.buildCorpus(storage.attachmentsDir(p.id)); } catch (e) {}
+        enrich = await enrichLib.enrich(mergedIntake, apiKey, corpus && corpus.includedCount ? corpus : null);
+        p.lastEnrich = enrich;
+      } catch (e) { errors.push('re-enrich skipped: ' + e.message); }
+    }
+    try { renderIntake.render(dir, mergedIntake, { docsDir, enrich, linear: p.linear || null, wizardEditUrl: wizardEditUrl(req, p.id) }); writeAux(p, dir); }
+    catch (e) { errors.push('render: ' + e.message); }
+  }
+
+  // 3. Run accepted LINEAR actions, each recording the Change ID.
+  const linearKey = (b.linearKey && String(b.linearKey).trim()) || '';
+  if (p.linearProjectId && linearKey && acceptedUnits.some((u) => u.group === 'linear' || u.group === 'affected-closed')) {
+    let meta = null;
+    try { meta = await linear.loadProject(linearKey, p.linearProjectId); } catch (e) { errors.push('Linear load: ' + e.message); }
+    if (meta) {
+      const byId = {}; meta.issues.forEach((i) => { byId[i.identifier] = i; });
+      for (const u of acceptedUnits) {
+        try {
+          if (u.group === 'linear' && u.action === 'create') {
+            const issue = await linear.createIssueForChange(linearKey, { teamId: meta.teamId, projectId: p.linearProjectId, title: u.title, owner: u.owner, label: u.label, objective: u.objective, reason: u.reason, changeId });
+            applied.linear.push({ action: 'create', identifier: issue && issue.identifier, url: issue && issue.url, title: u.title });
+          } else if (u.group === 'linear' && (u.action === 'update' || u.action === 'cancel')) {
+            const issue = byId[u.issueIdentifier];
+            if (!issue) { errors.push('issue ' + u.issueIdentifier + ' not found'); continue; }
+            if (u.action === 'update') { await linear.updateIssue(linearKey, issue, changeId, u.objective || u.reason); applied.linear.push({ action: 'update', identifier: issue.identifier }); }
+            else { await linear.cancelIssue(linearKey, issue, meta.states, changeId, u.objective || u.reason); applied.linear.push({ action: 'cancel', identifier: issue.identifier }); }
+          } else if (u.group === 'affected-closed') {
+            const issue = byId[u.issueIdentifier];
+            if (!issue) { errors.push('issue ' + u.issueIdentifier + ' not found'); continue; }
+            await linear.addComment(linearKey, issue.id, '**' + changeId + '** — a doc change affects this completed issue: ' + u.reason + '\n\n_Review whether it needs reopening._');
+            applied.affectedClosed.push(issue.identifier);
+          }
+        } catch (e) { errors.push((u.issueIdentifier || u.title || u.id) + ': ' + e.message); }
+      }
+    }
+  }
+
+  // 4. Record code-impact notes (informational) in the change log.
+  for (const u of acceptedUnits) if (u.group === 'code') applied.code.push({ area: u.area, detail: u.detail, functions: u.functions || [] });
+
+  // 5. Persist: advance the baseline, append the change-log entry.
+  p.baseline = mergedIntake;
+  p.changes = Array.isArray(p.changes) ? p.changes : [];
+  p.changes.push({ id: changeId, at: new Date().toISOString(), summary: b.summary || '', applied, errors });
+  p.enrichedAt = new Date().toISOString();
+  storage.saveProject(p);
+
+  res.json({ ok: true, changeId, applied, errors, project: summarize(p) });
 });
 
 // ─── browse / download the generated structure ──────────────────────────────
