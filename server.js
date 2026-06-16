@@ -741,7 +741,9 @@ function makeBundleEditable(stage) {
   try {
     let src = fs.readFileSync(sd, 'utf-8');
     if (!/docs-editor/.test(src)) {
-      src = src.replace(/(require\('\.\/lib\/docs-server'\)\(app[^;]*\);)/,
+      // Anchor at column 0 (multiline) so we match the REAL statement, not the
+      // `//   require('./lib/docs-server')(app);` example in the header comment.
+      src = src.replace(/^(require\('\.\/lib\/docs-server'\)\(app[^;]*\);)/m,
         "require('./lib/docs-editor')(app);\n$1");
       fs.writeFileSync(sd, src);
     }
