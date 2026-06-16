@@ -54,6 +54,7 @@ function summarize(p) {
     docsDir: (p.answers && p.answers.integrations && p.answers.integrations.docsDir) || 'docs',
     fileCount: p.manifest ? p.manifest.fileCount : 0,
     attachmentCount: Array.isArray(p.attachments) ? p.attachments.length : 0,
+    deployUrl: p.deployUrl || null, deployedAt: p.deployedAt || null,
   };
 }
 
@@ -712,7 +713,39 @@ function stageDeploy(genDir, params) {
   const f = deployBundle.files(params);
   Object.keys(f).forEach((k) => { if (k !== '_meta') fs.writeFileSync(path.join(stage, k), f[k]); });
   fs.chmodSync(path.join(stage, 'deploy.sh'), 0o755);
+  makeBundleEditable(stage);
   return stage;
+}
+
+// Ship the in-page editor backend + the brain libs it needs into the bundle, and
+// wire serve-docs.js to mount it — so the deployed site's hamburger Edit flow can
+// Assess/Apply in the container. The bundle already carries PLAN-INTAKE.json and
+// reference/ (the editor's baseline + corpus); these libs only require Node
+// built-ins, so no package.json change is needed.
+function makeBundleEditable(stage) {
+  const libDst = path.join(stage, 'lib');
+  try { fs.mkdirSync(libDst, { recursive: true }); } catch (e) {}
+  for (const m of ['docs-editor', 'assess', 'linear', 'render-intake', 'reverse-engineer', 'enrich']) {
+    try { fs.copyFileSync(path.join(__dirname, 'lib', m + '.js'), path.join(libDst, m + '.js')); }
+    catch (e) { console.error('makeBundleEditable: could not ship lib/' + m + '.js:', e.message); }
+  }
+  // Ship the in-page editor client (hamburger menu, Edit wizard, Changelog) beside
+  // docs-editor.js, which serves it at /_editor/client.js.
+  try { fs.copyFileSync(path.join(__dirname, 'public', 'docs-editor-client.js'), path.join(libDst, 'docs-editor-client.js')); }
+  catch (e) { console.error('makeBundleEditable: could not ship docs-editor-client.js:', e.message); }
+
+  // Mount the editor BEFORE docs-server so its HTML-injection middleware wraps the
+  // page responses (it appends the client <script>). Idempotent; matches both the
+  // plain `(app)` form and the rewritten `(app, { linearProjectId: … })` form.
+  const sd = path.join(stage, 'serve-docs.js');
+  try {
+    let src = fs.readFileSync(sd, 'utf-8');
+    if (!/docs-editor/.test(src)) {
+      src = src.replace(/(require\('\.\/lib\/docs-server'\)\(app[^;]*\);)/,
+        "require('./lib/docs-editor')(app);\n$1");
+      fs.writeFileSync(sd, src);
+    }
+  } catch (e) { console.error('makeBundleEditable: could not wire serve-docs.js:', e.message); }
 }
 
 // Deploy now — push a generated package to a Docker host over SSH and bring it
@@ -727,7 +760,7 @@ app.post('/api/projects/:id/deploy', (req, res) => {
   if (!b.host) return res.status(400).json({ ok: false, error: 'host is required' });
   if (!b.password) return res.status(400).json({ ok: false, error: 'SSH password is required — the wizard pushes from inside the container, so it needs the password (key auth isn’t wired here). You can still use “Download bundle” and run deploy.sh with your own key.' });
 
-  const params = { name: b.name || p.name, host: b.host, sshUser: b.user, sshPort: b.sshPort, port: b.port, hostname: b.hostname, linearKey: b.linearKey };
+  const params = { name: b.name || p.name, host: b.host, sshUser: b.user, sshPort: b.sshPort, port: b.port, hostname: b.hostname, linearKey: b.linearKey, anthropicKey: b.apiKey, linearProjectId: p.linearProjectId };
   const name = deployBundle.slugify(params.name);
   const user = (b.user || 'docker').trim();
   const host = String(b.host).trim();
@@ -758,6 +791,9 @@ app.post('/api/projects/:id/deploy', (req, res) => {
         '--exclude', 'node_modules', '--exclude', '.git', '--exclude', '_static', '--exclude', 'deploy.sh',
         './', target + ':apps/' + name + '/']);
       await run('sshpass', ['-e', 'ssh', ...sshArgs, target, 'cd ~/apps/' + name + ' && docker compose up -d --build']);
+      // Remember where it's live so the homepage card can deep-link to the docs.
+      p.deployUrl = meta.reachUrl; p.deployedAt = new Date().toISOString();
+      try { storage.saveProject(p); } catch (e) {}
       res.json({ ok: true, url: meta.reachUrl, output: out.join('').slice(-6000) });
     } catch (e) {
       res.status(500).json({ ok: false, error: String(e.message || e), output: out.join('').slice(-6000) });
@@ -793,7 +829,7 @@ app.get('/api/projects/:id/download-deploy', (req, res) => {
   const q = req.query || {};
   if (!q.host) return res.status(400).json({ error: 'host is required' });
   let stage;
-  try { stage = stageDeploy(dir, { name: q.name || p.name, host: q.host, sshUser: q.user, sshPort: q.sshPort, port: q.port, hostname: q.hostname }); }
+  try { stage = stageDeploy(dir, { name: q.name || p.name, host: q.host, sshUser: q.user, sshPort: q.sshPort, port: q.port, hostname: q.hostname, linearProjectId: p.linearProjectId }); }
   catch (e) { return res.status(500).json({ error: 'bundle failed', detail: String(e.message || e).slice(0, 300) }); }
   res.setHeader('Content-Type', 'application/zip');
   res.setHeader('Content-Disposition', 'attachment; filename="' + deployBundle.slugify(q.name || p.name) + '-deploy.zip"');

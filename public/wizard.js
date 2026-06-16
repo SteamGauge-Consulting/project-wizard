@@ -486,6 +486,9 @@
           // If a Linear tracker was created, hand the key to the container so its
           // /docs plan page shows live status (the project id is baked into serve-docs.js).
           if (window.__bp_linear && linKey) deploy.linearKey = linKey;
+          // Bake the Claude key so the deployed site's hamburger Edit flow can run
+          // Assess + re-enrich on the pod without re-entering a key.
+          if (key) deploy.apiKey = key;
           step('3/3 · Deploying to ' + esc(host) + '… (first build can take a minute)');
           return P('/api/projects/' + project.id + '/deploy', deploy);
         }).then(function (d) {
