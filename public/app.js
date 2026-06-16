@@ -14,7 +14,8 @@
     download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>',
     refresh: '<path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/>',
     sparkles: '<path d="M12 3l1.9 4.8L18.7 9.7 13.9 11.6 12 16.4 10.1 11.6 5.3 9.7 10.1 7.8z"/><path d="M19 14l.8 2 .2.8 2 .8-2 .8-.2.8-.8 2-.8-2-.2-.8-2-.8 2-.8.2-.8z"/>',
-    file: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>'
+    file: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>',
+    edit: '<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4z"/>'
   };
   function ic(name) { return '<svg viewBox="0 0 24 24" aria-hidden="true">' + ICONS[name] + '</svg>'; }
 
@@ -324,6 +325,7 @@
         '<div class="sub">' + files.filter(function (f) { return f.type === 'file'; }).length + ' files · generated ' + fmtDate(p.generatedAt) + '</div></div>' +
         '<div style="display:flex;gap:10px;flex-wrap:wrap">' +
         '<button class="btn sm primary" id="build-btn">' + ic('sparkles') + 'Build full docs + Linear</button>' +
+        '<button class="btn sm" id="edit-btn">' + ic('edit') + 'Edit &amp; assess</button>' +
         '<button class="btn sm" id="export-btn">' + ic('download') + 'Export / Deploy…</button>' +
         '<button class="btn sm" id="regen">' + ic('refresh') + 'Re-run wizard</button></div></div>' +
         (p.enrichedAt ? '<div class="ok-note">✦ AI-built ' + fmtDate(p.enrichedAt) + (p.linearUrl ? ' · <a href="' + esc(p.linearUrl) + '" target="_blank">Linear project ↗</a>' : '') + '</div>' : '') +
@@ -332,6 +334,7 @@
       app.querySelector('#regen').addEventListener('click', function () { location.hash = '#/p/' + id + '/edit'; });
       app.querySelector('#export-btn').addEventListener('click', function () { exportSheet(id); });
       app.querySelector('#build-btn').addEventListener('click', function () { buildSheet(id); });
+      app.querySelector('#edit-btn').addEventListener('click', function () { editSheet(id, p); });
 
       var tree = app.querySelector('#tree');
       tree.innerHTML = files.map(function (f) {
@@ -420,6 +423,176 @@
           toast(msg + ' — now Export / Deploy to push it live');
           bg.remove(); docs(id);
         }).catch(function (e) { btn.disabled = false; status.style.color = 'var(--red)'; status.textContent = '✗ ' + e.message; });
+    });
+  }
+
+  // ─── living docs: Edit → Assess Changes → accept/revert → apply ────────────
+  var EDIT_TABLES = {
+    requirements: { title: 'Requirements', cols: [['title', 'Requirement'], ['priority', 'Priority'], ['test', 'How you’d test it']] },
+    decisions:    { title: 'Decisions',    cols: [['concern', 'Concern'], ['choice', 'Decision'], ['why', 'Why']] },
+    milestones:   { title: 'Milestones',   cols: [['name', 'Milestone'], ['done', 'Done means'], ['target', 'Target']] },
+    risks:        { title: 'Risks',        cols: [['risk', 'Risk / constraint'], ['mitigation', 'Mitigation']] },
+    scalability:  { title: 'Non-functional & scale', cols: [['area', 'Area'], ['target', 'Target'], ['adr', 'Decision']] },
+  };
+  var EDIT_PRODUCT = [['oneliner', 'One-liner'], ['problem', 'Problem'], ['users', 'Users'], ['differentiator', 'Differentiator'], ['experience', 'Experience'], ['success', 'Success'], ['notBuilding', 'Not building (one per line)']];
+
+  function bufToIntake(buf) {
+    return {
+      product: buf.product || {}, startDate: buf.startDate || '',
+      requirements: buf.requirements || [], decisions: buf.decisions || [],
+      milestones: buf.milestones || [], risks: buf.risks || [], scalability: buf.scalability || [],
+    };
+  }
+
+  function editSheet(id, p) {
+    var buf = JSON.parse(JSON.stringify(p.answers || {}));
+    buf.product = buf.product || {};
+    Object.keys(EDIT_TABLES).forEach(function (s) { if (!Array.isArray(buf[s])) buf[s] = []; });
+    var savedKey = ''; try { savedKey = localStorage.getItem('pw_anthropic_key') || ''; } catch (e) {}
+
+    var bg = document.createElement('div'); bg.className = 'modal-bg';
+    bg.innerHTML = '<div class="modal edit-modal"><h3>' + ic('edit') + 'Edit docs</h3>' +
+      '<p class="hint">Edit any value; add or remove rows. <b>Nothing saves</b> until you Assess Changes and accept them. Assess analyzes your edits against the live Linear tracker and the uploaded codebase, then lets you accept or revert each change.</p>' +
+      '<div class="edit-body" id="edit-body"></div>' +
+      '<div class="edit-foot">' +
+        '<div class="row2"><div><label>Claude API key</label><input type="password" id="e-ai" placeholder="sk-ant-… (drives the analysis)" value="' + esc(savedKey) + '" autocomplete="off" /></div>' +
+        '<div><label>Linear API key <span style="text-transform:none;letter-spacing:0">(to sync the tracker)</span></label><input type="password" id="e-lin" placeholder="lin_api_… (write access)" autocomplete="off" /></div></div>' +
+        '<div style="display:flex;gap:8px;margin-top:12px;align-items:center">' +
+          '<button class="btn sm primary" id="e-assess">' + ic('sparkles') + 'Assess Changes</button>' +
+          '<button class="btn sm" id="e-discard">Discard edits</button>' +
+          '<span class="hint" id="e-status"></span></div>' +
+      '</div></div>';
+    document.body.appendChild(bg);
+    var body = bg.querySelector('#edit-body'), status = bg.querySelector('#e-status');
+    bg.querySelector('#e-discard').addEventListener('click', function () { bg.remove(); });
+
+    function rowsHtml(sec) {
+      var cols = EDIT_TABLES[sec].cols;
+      return (buf[sec] || []).map(function (r, i) {
+        var cells = cols.map(function (c) {
+          return '<td><textarea rows="2" data-sec="' + sec + '" data-idx="' + i + '" data-key="' + c[0] + '">' + esc(r[c[0]] || '') + '</textarea></td>';
+        }).join('');
+        return '<tr>' + cells + '<td class="rm"><button class="x" data-rm="' + sec + '" data-idx="' + i + '" title="Remove row">×</button></td></tr>';
+      }).join('');
+    }
+    function tableHtml(sec) {
+      var t = EDIT_TABLES[sec];
+      return '<div class="edit-sec"><div class="edit-sec-h">' + esc(t.title) + ' <button class="btn xs" data-add="' + sec + '">+ Add row</button></div>' +
+        '<table class="edit-tbl" data-tbl="' + sec + '"><thead><tr>' + t.cols.map(function (c) { return '<th>' + esc(c[1]) + '</th>'; }).join('') + '<th></th></tr></thead>' +
+        '<tbody>' + rowsHtml(sec) + '</tbody></table></div>';
+    }
+    function render() {
+      var prodFields = '<div class="row2"><div><label>Product name</label><input type="text" data-prod="name" value="' + esc(buf.product.name || p.name || '') + '" /></div>' +
+        '<div><label>Domain</label><input type="text" data-prod="domain" value="' + esc(buf.product.domain || '') + '" /></div></div>' +
+        '<label>Target start date</label><input type="date" data-top="startDate" value="' + esc(buf.startDate || '') + '" />' +
+        EDIT_PRODUCT.map(function (f) { return '<label>' + esc(f[1]) + '</label><textarea rows="2" data-prod="' + f[0] + '">' + esc(buf.product[f[0]] || '') + '</textarea>'; }).join('');
+      body.innerHTML = '<div class="edit-sec"><div class="edit-sec-h">Product</div>' + prodFields + '</div>' +
+        Object.keys(EDIT_TABLES).map(tableHtml).join('');
+    }
+    render();
+
+    body.addEventListener('input', function (e) {
+      var el = e.target;
+      if (el.dataset.prod) { buf.product[el.dataset.prod] = el.value; }
+      else if (el.dataset.top) { buf[el.dataset.top] = el.value; }
+      else if (el.dataset.sec) { (buf[el.dataset.sec][+el.dataset.idx] = buf[el.dataset.sec][+el.dataset.idx] || {})[el.dataset.key] = el.value; }
+    });
+    body.addEventListener('click', function (e) {
+      var add = e.target.getAttribute && e.target.getAttribute('data-add');
+      var rm = e.target.getAttribute && e.target.getAttribute('data-rm');
+      if (add) { buf[add].push({}); render(); }
+      else if (rm) { buf[rm].splice(+e.target.getAttribute('data-idx'), 1); render(); }
+    });
+
+    bg.querySelector('#e-assess').addEventListener('click', function () {
+      var btn = this; var apiKey = bg.querySelector('#e-ai').value.trim(), linKey = bg.querySelector('#e-lin').value.trim();
+      try { if (apiKey) localStorage.setItem('pw_anthropic_key', apiKey); } catch (e) {}
+      btn.disabled = true; status.style.color = ''; status.textContent = 'Assessing changes against Linear + code… (can take a minute)';
+      api('/api/projects/' + id + '/assess', { method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ proposed: bufToIntake(buf), apiKey: apiKey, linearKey: linKey }) })
+        .then(function (res) {
+          btn.disabled = false; var j = res.j || {};
+          if (!res.ok) {
+            status.style.color = 'var(--red)';
+            status.innerHTML = '✗ ' + esc(j.error || 'failed') + (j.code === 'no_corpus' ? ' — <a href="#/p/' + id + '/edit">add a code/zip upload</a>, then assess.' : '');
+            return;
+          }
+          if (j.empty) { status.style.color = ''; status.textContent = j.message || 'No changes to assess.'; return; }
+          status.textContent = '';
+          assessPopup(id, bufToIntake(buf), j, apiKey, linKey, function () { bg.remove(); });
+        }).catch(function (e) { btn.disabled = false; status.style.color = 'var(--red)'; status.textContent = '✗ ' + e.message; });
+    });
+  }
+
+  function unitCardHtml(u) {
+    var pieces = '';
+    if (u.group === 'doc') {
+      var det = [];
+      (u.scalars || []).forEach(function (s) { det.push('<div class="chg-row"><b>' + esc(s.field) + '</b>: <span class="was">' + esc(s.before || '∅') + '</span> → <span class="now">' + esc(s.after || '∅') + '</span></div>'); });
+      (u.added || []).forEach(function (r) { det.push('<div class="chg-row add">+ ' + esc(JSON.stringify(r).slice(0, 160)) + '</div>'); });
+      (u.removed || []).forEach(function (r) { det.push('<div class="chg-row del">− ' + esc(JSON.stringify(r).slice(0, 160)) + '</div>'); });
+      (u.modified || []).forEach(function (m) { det.push('<div class="chg-row">~ ' + esc(JSON.stringify(m.after).slice(0, 160)) + '</div>'); });
+      pieces = '<div class="chg-kind doc">DOC · ' + esc(u.section) + '</div>' +
+        (u.impact ? '<div class="chg-impact">' + esc(u.impact) + '</div>' : '') + det.join('');
+    } else if (u.group === 'linear') {
+      pieces = '<div class="chg-kind lin lin-' + esc(u.action) + '">LINEAR · ' + esc(u.action) + (u.issueIdentifier ? ' ' + esc(u.issueIdentifier) : '') + '</div>' +
+        '<div class="chg-title">' + esc(u.title || '') + '</div>' +
+        (u.objective ? '<div class="chg-impact">' + esc(u.objective) + '</div>' : '') +
+        '<div class="chg-reason">' + esc(u.reason || '') + (u.action === 'create' ? ' · ' + esc(u.owner) + ' · ' + esc(u.label) : '') + '</div>';
+    } else if (u.group === 'affected-closed') {
+      pieces = '<div class="chg-kind closed">CLOSED ISSUE · ' + esc(u.issueIdentifier) + '</div>' +
+        '<div class="chg-title">' + esc(u.title || '') + '</div><div class="chg-reason">' + esc(u.reason || '') + '</div>' +
+        '<div class="chg-note">Accepting comments the Change ID here — it does not reopen the issue.</div>';
+    } else if (u.group === 'code') {
+      pieces = '<div class="chg-kind code">CODE IMPACT · ' + esc(u.area || '') + '</div>' +
+        '<div class="chg-impact">' + esc(u.detail || '') + '</div>' +
+        (u.functions || []).map(function (f) { return '<div class="chg-row"><code>' + esc(f.name) + '</code>' + (f.file ? ' <span class="muted">' + esc(f.file) + '</span>' : '') + ' — ' + esc(f.impact) + '</div>'; }).join('');
+    }
+    return '<div class="chg-card"><label class="chg-acc"><input type="checkbox" class="chg-cb" data-uid="' + esc(u.id) + '" checked /> <span>accept</span></label>' +
+      '<div class="chg-main">' + pieces + '</div></div>';
+  }
+
+  function assessPopup(id, proposed, assessResult, apiKey, linKey, onApplied) {
+    var units = assessResult.units || [];
+    var bg = document.createElement('div'); bg.className = 'modal-bg';
+    var grouped = { doc: [], linear: [], 'affected-closed': [], code: [] };
+    units.forEach(function (u) { (grouped[u.group] || (grouped[u.group] = [])).push(u); });
+    function section(title, arr) { return arr.length ? '<h4 class="chg-grp">' + title + ' <span>(' + arr.length + ')</span></h4>' + arr.map(unitCardHtml).join('') : ''; }
+    bg.innerHTML = '<div class="modal edit-modal"><h3>' + ic('sparkles') + 'Assess Changes</h3>' +
+      '<p class="chg-summary">' + esc(assessResult.summary || '') + '</p>' +
+      (assessResult.hasLinear ? '' : '<p class="hint">No Linear key/tracker linked — doc changes apply but no issues sync.</p>') +
+      '<div class="edit-body">' +
+        section('Documentation', grouped.doc) +
+        section('Linear issues', grouped.linear) +
+        section('Affected completed issues', grouped['affected-closed']) +
+        section('Code impact', grouped.code) +
+        (units.length ? '' : '<p class="hint">No actionable changes detected.</p>') +
+      '</div>' +
+      '<div class="edit-foot"><div style="display:flex;gap:8px;align-items:center">' +
+        '<button class="btn sm primary" id="c-apply">' + ic('sparkles') + 'Apply accepted</button>' +
+        '<button class="btn sm" id="c-cancel">Back to editing</button>' +
+        '<span class="hint" id="c-status"></span></div></div></div>';
+    document.body.appendChild(bg);
+    var cstatus = bg.querySelector('#c-status');
+    bg.querySelector('#c-cancel').addEventListener('click', function () { bg.remove(); });
+
+    bg.querySelector('#c-apply').addEventListener('click', function () {
+      var btn = this;
+      var accepted = Array.prototype.slice.call(bg.querySelectorAll('.chg-cb:checked')).map(function (cb) { return cb.getAttribute('data-uid'); });
+      btn.disabled = true; cstatus.style.color = ''; cstatus.textContent = 'Applying ' + accepted.length + ' change(s)… saving docs + syncing Linear';
+      api('/api/projects/' + id + '/apply-changes', { method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ proposed: proposed, units: units, accepted: accepted, apiKey: apiKey, linearKey: linKey, summary: assessResult.summary }) })
+        .then(function (res) {
+          btn.disabled = false; var j = res.j || {};
+          if (!res.ok) { cstatus.style.color = 'var(--red)'; cstatus.textContent = '✗ ' + (j.error || 'failed'); return; }
+          var a = j.applied || {};
+          var msg = j.changeId + ' applied · ' + (a.docSections || []).length + ' doc section(s)' +
+            (a.linear && a.linear.length ? ', ' + a.linear.length + ' Linear action(s)' : '') +
+            (a.affectedClosed && a.affectedClosed.length ? ', ' + a.affectedClosed.length + ' closed-issue note(s)' : '');
+          if (j.errors && j.errors.length) msg += ' · ' + j.errors.length + ' warning(s)';
+          toast(msg);
+          bg.remove(); if (onApplied) onApplied(); docs(id);
+        }).catch(function (e) { btn.disabled = false; cstatus.style.color = 'var(--red)'; cstatus.textContent = '✗ ' + e.message; });
     });
   }
 
