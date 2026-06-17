@@ -315,6 +315,11 @@
         '<label>Linear project ID</label><input type="text" id="ig-linproj" value="' + esc(ig.linearProjectId || '') + '" placeholder="the project whose issues Assess/Apply sync">' +
         '<label>GitHub repo URL</label><input type="text" id="ig-ghrepo" value="' + esc(ig.githubRepoUrl || '') + '" placeholder="https://github.com/org/repo">' +
         '<label>GitHub token &nbsp;' + dot(ig.hasGithubToken) + '</label><input type="password" id="ig-ghtok" autocomplete="off" placeholder="' + ph(ig.hasGithubToken, 'ghp_…') + '">' +
+        '<div class="pwe-sub" style="margin:16px 0 2px;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#6A6A66">Deploy host (SSH) — for Claude Code to stand up / update the pod</div>' +
+        '<div class="pwe-row2"><div><label>SSH host</label><input type="text" id="ig-sshhost" value="' + esc(ig.sshHost || '') + '" placeholder="10.10.0.208 or host.example"></div>' +
+        '<div><label>SSH user</label><input type="text" id="ig-sshuser" value="' + esc(ig.sshUser || '') + '" placeholder="docker"></div></div>' +
+        '<div class="pwe-row2"><div><label>SSH password &nbsp;' + dot(ig.hasSshPassword) + '</label><input type="password" id="ig-sshpass" autocomplete="off" placeholder="' + ph(ig.hasSshPassword, '••••') + '"></div>' +
+        '<div><label>SSH port</label><input type="text" id="ig-sshport" value="' + esc(ig.sshPort || '') + '" placeholder="22"></div></div>' +
         '<div class="pwe-row2"><div><label>Docs folder</label><input type="text" value="' + esc(ig.docsDir || 'docs') + '" disabled></div>' +
         '<div><label>This pod</label><input type="text" value="' + esc(location.host) + '" disabled></div></div>' +
         '<div style="margin-top:16px;display:flex;gap:10px;align-items:center"><button class="pwe-btn primary" id="ig-save">Save integrations</button><span class="pwe-status" id="ig-st"></span></div>';
@@ -326,6 +331,10 @@
           linearProjectId: body.querySelector('#ig-linproj').value,
           githubRepoUrl: body.querySelector('#ig-ghrepo').value,
           githubToken: body.querySelector('#ig-ghtok').value,
+          sshHost: body.querySelector('#ig-sshhost').value,
+          sshUser: body.querySelector('#ig-sshuser').value,
+          sshPort: body.querySelector('#ig-sshport').value,
+          sshPassword: body.querySelector('#ig-sshpass').value,
         };
         btn.disabled = true; st.style.color = ''; st.textContent = 'Saving…';
         api('/api/integrations', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) }).then(function (res) {
