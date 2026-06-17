@@ -394,6 +394,8 @@
         '<div class="hint">Keys are used per-request and never stored on the server. The tracker is always a <b>new</b> project — it never writes into an existing one.</div>' +
         '<div style="display:flex;gap:8px;margin-top:14px;align-items:center"><button class="btn sm primary" id="b-go">' + ic('sparkles') + 'Build</button>' +
         '<span class="hint" id="b-status"></span></div>' +
+        '<style>@keyframes pw-pulse{0%,100%{opacity:1}50%{opacity:.25}}</style>' +
+        '<div id="b-prog" style="display:none;margin-top:12px;border-top:1px solid var(--line);padding-top:10px;font-size:12.5px;max-height:340px;overflow:auto"></div>' +
       '</div>' +
       '<div class="row"><button class="btn" id="b-close">Close</button></div></div>';
     document.body.appendChild(bg);
@@ -421,14 +423,34 @@
       try { if (bg.querySelector('#b-remember').checked && key) localStorage.setItem(KEY_LS, key); else localStorage.removeItem(KEY_LS); } catch (e) {}
       btn.disabled = true;
       status.style.color = '';
-      status.textContent = 'starting… (this build is thorough — it can take several minutes)';
-      // The build is long (one AI pass per milestone + a final cohesion review), so
-      // poll the server's progress and show exactly which step it's on.
+      status.textContent = 'starting… (this build explores your code with an agent — it can take several minutes)';
+      // The build emits structured phase events; poll them and render the live phase,
+      // an "agent running" indicator, per-phase token counts, and running totals.
+      var progEl = bg.querySelector('#b-prog');
+      var fmtK = function (n) { return Math.round((n || 0) / 1000) + 'K'; };
+      var renderProgress = function (pg) {
+        if (!pg) return;
+        status.textContent = '';
+        progEl.style.display = 'block';
+        var rows = [];
+        var dot = pg.agentRunning
+          ? '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#97C459;margin-right:7px;animation:pw-pulse 1s infinite;vertical-align:1px"></span>'
+          : '<span style="color:#6A6A66;margin-right:7px">•</span>';
+        var live = pg.liveTokens ? ' <span style="color:#6A6A66">· ' + fmtK(pg.liveTokens.fresh) + ' fresh / ' + fmtK(pg.liveTokens.cached) + ' cached / ' + fmtK(pg.liveTokens.output) + ' out</span>' : '';
+        rows.push('<div style="color:#E8E8E4;margin-bottom:8px">' + dot + esc(pg.current || pg.phase || '') + live + '</div>');
+        (pg.steps || []).forEach(function (s) {
+          var tk = s.tokens ? '<span style="color:#6A6A66;font-family:ui-monospace,Menlo,monospace;font-size:11px;white-space:nowrap">' + fmtK(s.tokens.fresh) + ' / ' + fmtK(s.tokens.cached) + ' / ' + fmtK(s.tokens.output) + '</span>' : '';
+          rows.push('<div style="display:flex;justify-content:space-between;gap:12px;color:#9A9A95;padding:2px 0"><span>✓ ' + esc(s.label) + (s.note ? ' <span style="color:#6A6A66">(' + esc(s.note) + ')</span>' : '') + '</span>' + tk + '</div>');
+        });
+        var t = pg.totals || {};
+        if (t.fresh || t.cached || t.output) rows.push('<div style="margin-top:8px;border-top:1px solid var(--line);padding-top:6px;color:#6A6A66;font-size:11px">totals: <b style="color:#9A9A95">' + fmtK(t.fresh) + '</b> fresh · <b style="color:#9A9A95">' + fmtK(t.cached) + '</b> cached · <b style="color:#9A9A95">' + fmtK(t.output) + '</b> out  <span style="color:#4a4a52">(fresh billed full, cached ~10%)</span></div>');
+        progEl.innerHTML = rows.join('');
+      };
       var poll = setInterval(function () {
         fetch('/api/projects/' + id + '/build-progress').then(function (r) { return r.json(); }).then(function (pg) {
-          if (pg && pg.current && !pg.done) status.textContent = '⏳ ' + pg.current + (pg.steps && pg.steps.length ? '  · step ' + pg.steps.length : '');
+          if (pg && !pg.done) renderProgress(pg);
         }).catch(function () {});
-      }, 2000);
+      }, 1500);
       var stopPoll = function () { clearInterval(poll); };
       api('/api/projects/' + id + '/build-full', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ apiKey: key, linearKey: linKey, teamId: teamId }) })
         .then(function (res) {

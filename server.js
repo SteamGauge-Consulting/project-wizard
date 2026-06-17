@@ -449,9 +449,19 @@ app.post('/api/projects/:id/build-full', async (req, res) => {
   const out = { ok: true };
   let plan = null, enrich = null, lr = null;
 
-  // Progress sink — each AI step calls this; the UI polls /build-progress.
-  const prog = buildProgress[p.id] = { steps: [], current: 'Starting…', done: false, startedAt: Date.now() };
-  const onProgress = (msg) => { prog.current = msg; prog.steps.push({ msg: msg, at: Date.now() }); };
+  // Progress sink — the AI emits structured phase events; the UI polls /build-progress
+  // and renders the current phase, a live "agent running" indicator, per-phase token
+  // counts, and running totals.
+  const prog = buildProgress[p.id] = { phase: 'Starting…', current: 'Starting…', agentRunning: false, steps: [], totals: { fresh: 0, cached: 0, output: 0 }, liveTokens: null, done: false, startedAt: Date.now() };
+  const onProgress = (ev) => {
+    if (typeof ev === 'string') ev = { t: 'start', label: ev };
+    if (ev.t === 'activity') { prog.current = ev.detail || prog.phase; prog.agentRunning = true; if (ev.tokens) prog.liveTokens = ev.tokens; }
+    else if (ev.t === 'done') {
+      if (ev.tokens) { prog.totals.fresh += ev.tokens.fresh || 0; prog.totals.cached += ev.tokens.cached || 0; prog.totals.output += ev.tokens.output || 0; }
+      prog.steps.push({ label: ev.label, tokens: ev.tokens || null, note: ev.note || '' });
+      prog.current = ev.label + ' ✓' + (ev.note ? ' — ' + ev.note : ''); prog.agentRunning = false; prog.liveTokens = null;
+    } else { prog.phase = ev.label; prog.current = ev.label; prog.agentRunning = !!ev.agent; prog.liveTokens = null; }
+  };
 
   // 1. AI enrichment → produce the governance plan + rich doc content (Mermaid,
   //    Given/When/Then, ADR bodies). Optional: skipped when no key is available
