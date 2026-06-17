@@ -806,7 +806,8 @@ app.post('/api/projects/:id/deploy', (req, res) => {
   if (!b.host) return res.status(400).json({ ok: false, error: 'host is required' });
   if (!b.password) return res.status(400).json({ ok: false, error: 'SSH password is required — the wizard pushes from inside the container, so it needs the password (key auth isn’t wired here). You can still use “Download bundle” and run deploy.sh with your own key.' });
 
-  const params = { name: b.name || p.name, host: b.host, sshUser: b.user, sshPort: b.sshPort, port: b.port, hostname: b.hostname, linearKey: b.linearKey, anthropicKey: b.apiKey, linearProjectId: b.linearProjectId || p.linearProjectId };
+  const wizardUrl = (req.protocol || 'http') + '://' + req.get('host');
+  const params = { name: b.name || p.name, host: b.host, sshUser: b.user, sshPort: b.sshPort, port: b.port, hostname: b.hostname, linearKey: b.linearKey, anthropicKey: b.apiKey, linearProjectId: b.linearProjectId || p.linearProjectId, wizardUrl: wizardUrl, wizardProjectId: p.id };
   const name = deployBundle.slugify(params.name);
   const user = (b.user || 'docker').trim();
   const host = String(b.host).trim();
@@ -833,14 +834,35 @@ app.post('/api/projects/:id/deploy', (req, res) => {
   (async () => {
     try {
       await run('sshpass', ['-e', 'ssh', ...sshArgs, target, 'mkdir -p ~/apps/' + name]);
+      // Is this an UPDATE of an existing pod (vs a first deploy)? If so, preserve
+      // its content — the intake it's been edited to AND the AI enrichment it
+      // accepted — not just keys + changelog, then re-render in place so the new
+      // templates apply to ITS content rather than the wizard's.
+      let existing = false;
+      try { await run('sshpass', ['-e', 'ssh', ...sshArgs, target, 'test -f ~/apps/' + name + '/PLAN-INTAKE.json']); existing = true; } catch (e) {}
+      const preserve = existing ? ['--exclude', 'PLAN-INTAKE.json', '--exclude', '.deploy/enrich.json'] : [];
       await run('sshpass', ['-e', 'rsync', '-az', '--delete', '-e', sshCmdStr,
         '--exclude', 'node_modules', '--exclude', '.git', '--exclude', '_static', '--exclude', 'deploy.sh',
-        // Preserve host-side runtime state across redeploys: the integration creds
-        // (set on the pod's Integrations tab) and the change log. enrich.json still
-        // syncs (the wizard regenerates it each build).
+        // Always preserve host-side runtime state across redeploys: the integration
+        // creds (Integrations tab) and the change log. On an update, also preserve
+        // the pod's own intake + accepted enrichment (above).
         '--exclude', '.deploy/keys.json', '--exclude', '.deploy/changes.json',
+        ...preserve,
         './', target + ':apps/' + name + '/']);
-      await run('sshpass', ['-e', 'ssh', ...sshArgs, target, 'cd ~/apps/' + name + ' && docker compose up -d --build']);
+      // Run the container as the deploying (SSH) user, not root, so files it writes
+      // into the bind-mounted app dir stay owned by that user — otherwise the next
+      // deploy's rsync can't overwrite them (Permission denied / rsync exit 23).
+      await run('sshpass', ['-e', 'ssh', ...sshArgs, target, 'cd ~/apps/' + name + ' && PUID=$(id -u) PGID=$(id -g) docker compose up -d --build']);
+      // On an update, re-render the pod's docs from ITS preserved intake with the
+      // new engine (the rsync shipped wizard-content docs; this replaces them with
+      // the pod's own content under the new templates). Pod needs a moment to boot.
+      if (existing) {
+        const origin = meta.reachUrl.replace(/\/docs\/?$/, '');
+        for (let i = 0; i < 12; i++) {
+          await new Promise((r) => setTimeout(r, 3000));
+          try { const rr = await fetch(origin + '/api/rerender', { method: 'POST' }); if (rr.ok) { out.push('\n→ re-rendered pod docs from its own intake\n'); break; } } catch (e) {}
+        }
+      }
       // Remember where it's live so the homepage card can deep-link to the docs.
       p.deployUrl = meta.reachUrl; p.deployedAt = new Date().toISOString();
       try { storage.saveProject(p); } catch (e) {}

@@ -229,7 +229,38 @@
     var code = el('<button>Export / code</button>');
     code.addEventListener('click', function () { m.remove(); openBrowse(); });
     m.appendChild(code);
+    var upd = el('<button>Update app</button>');
+    upd.addEventListener('click', function () { m.remove(); openUpdateApp(); });
+    m.appendChild(upd);
     return m;
+  }
+
+  // Pull the latest version from the wizard + re-render this pod, keeping the
+  // pod's edits, keys, and changelog. The pod restarts, so we watch for it to go
+  // down then come back, and reload.
+  function openUpdateApp() {
+    var m = modal('Update app');
+    var body = el('<div class="pwe-body"><p class="pwe-hint">Pulls the latest version from the wizard and re-renders this app from <b>its own</b> plan — your edits, integration keys, and changelog are kept. The app rebuilds + restarts, so give it 1–2 minutes.</p></div>');
+    var foot = el('<div class="pwe-foot"></div>');
+    var go = el('<button class="pwe-btn primary">Update now</button>');
+    var st = el('<span class="pwe-status"></span>');
+    foot.appendChild(go); foot.appendChild(st); body.appendChild(foot); m.mod.appendChild(body);
+    go.addEventListener('click', function () {
+      go.disabled = true; st.style.color = ''; st.innerHTML = '<span class="pwe-spin"></span>Starting…';
+      api('/api/update-app', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).then(function (res) {
+        if (!res.ok || !res.j.ok) { go.disabled = false; st.style.color = '#E0A848'; st.textContent = '✗ ' + ((res.j && res.j.error) || 'update failed'); return; }
+        st.innerHTML = '<span class="pwe-spin"></span>Rebuilding + restarting… this page reloads automatically when the app is back.';
+        var sawDown = false, tries = 0;
+        var iv = setInterval(function () {
+          tries++;
+          if (tries > 60) { clearInterval(iv); st.innerHTML = 'Taking a while — reload the page in a moment to see the update.'; return; }
+          fetch('/api/intake', { cache: 'no-store' }).then(function (r) {
+            if (!r.ok) { sawDown = true; return; }
+            if (sawDown) { clearInterval(iv); st.style.color = '#97C459'; st.textContent = '✓ Updated — reloading.'; setTimeout(function () { location.reload(true); }, 1200); }
+          }).catch(function () { sawDown = true; });
+        }, 4000);
+      }).catch(function (e) { go.disabled = false; st.style.color = '#E0A848'; st.textContent = '✗ ' + e.message; });
+    });
   }
 
   // ── modal shell ─────────────────────────────────────────────────────────────
