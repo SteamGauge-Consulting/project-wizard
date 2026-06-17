@@ -254,7 +254,7 @@
     api('/api/intake').then(function (res) {
       loading.remove();
       if (!res.ok || !res.j.ok) { m.mod.appendChild(el('<div class="pwe-body"><p class="pwe-warn">Couldn’t load the plan: ' + esc((res.j && res.j.error) || 'unknown') + '</p></div>')); return; }
-      caps = { hasClaude: res.j.hasClaude, hasLinear: res.j.hasLinear, hasCorpus: res.j.hasCorpus };
+      caps = { hasClaude: res.j.hasClaude, hasLinear: res.j.hasLinear, hasCorpus: res.j.hasCorpus, integrations: res.j.integrations || {} };
       runEditor(m, res.j.intake);
     });
   }
@@ -265,7 +265,7 @@
     buf.product = buf.product || {};
     TABLE_ORDER.forEach(function (t) { if (!Array.isArray(buf[t]) || !buf[t].length) buf[t] = [emptyRow(t)]; });
 
-    var STEPS = [{ key: 'product', title: 'Product' }].concat(TABLE_ORDER.map(function (t) { return { key: t, title: TABLES[t].title }; }));
+    var STEPS = [{ key: 'product', title: 'Product' }, { key: 'integrations', title: 'Integrations' }].concat(TABLE_ORDER.map(function (t) { return { key: t, title: TABLES[t].title }; }));
     var cur = 0;
 
     var pills = el('<div class="pwe-pills"></div>');
@@ -297,7 +297,47 @@
 
     function renderStep(key) {
       if (key === 'product') return renderProduct();
+      if (key === 'integrations') return renderIntegrations();
       return renderTable(key);
+    }
+
+    // Integrations tab — the keys/IDs/URLs the pod uses to build, assess, and sync
+    // (Claude · Linear · GitHub). Saved straight to the pod (not via the plan
+    // Assess flow); blank a key to keep the current one. Status is set/not-set only.
+    function renderIntegrations() {
+      var ig = (caps && caps.integrations) || {};
+      var dot = function (b) { return b ? '<span style="color:#97C459;font-size:11px;font-weight:600">● connected</span>' : '<span style="color:#6A6A66;font-size:11px">○ not set</span>'; };
+      var ph = function (b, hint) { return b ? '•••••••• set — type to replace' : hint; };
+      body.innerHTML =
+        '<h3>Integrations</h3><p class="pwe-hint">Keys &amp; settings this pod uses to build docs, assess changes, and sync the tracker. Stored on the pod and applied immediately — no redeploy. Leave a key blank to keep the current one; saved keys are never shown back here.</p>' +
+        '<label>Anthropic (Claude) API key &nbsp;' + dot(ig.hasClaude) + '</label><input type="password" id="ig-claude" autocomplete="off" placeholder="' + ph(ig.hasClaude, 'sk-ant-…') + '">' +
+        '<label>Linear API key &nbsp;' + dot(ig.hasLinearKey) + '</label><input type="password" id="ig-linkey" autocomplete="off" placeholder="' + ph(ig.hasLinearKey, 'lin_api_…') + '">' +
+        '<label>Linear project ID</label><input type="text" id="ig-linproj" value="' + esc(ig.linearProjectId || '') + '" placeholder="the project whose issues Assess/Apply sync">' +
+        '<label>GitHub repo URL</label><input type="text" id="ig-ghrepo" value="' + esc(ig.githubRepoUrl || '') + '" placeholder="https://github.com/org/repo">' +
+        '<label>GitHub token &nbsp;' + dot(ig.hasGithubToken) + '</label><input type="password" id="ig-ghtok" autocomplete="off" placeholder="' + ph(ig.hasGithubToken, 'ghp_…') + '">' +
+        '<div class="pwe-row2"><div><label>Docs folder</label><input type="text" value="' + esc(ig.docsDir || 'docs') + '" disabled></div>' +
+        '<div><label>This pod</label><input type="text" value="' + esc(location.host) + '" disabled></div></div>' +
+        '<div style="margin-top:16px;display:flex;gap:10px;align-items:center"><button class="pwe-btn primary" id="ig-save">Save integrations</button><span class="pwe-status" id="ig-st"></span></div>';
+      body.querySelector('#ig-save').addEventListener('click', function () {
+        var st = body.querySelector('#ig-st'); var btn = this;
+        var payload = {
+          anthropicKey: body.querySelector('#ig-claude').value,
+          linearKey: body.querySelector('#ig-linkey').value,
+          linearProjectId: body.querySelector('#ig-linproj').value,
+          githubRepoUrl: body.querySelector('#ig-ghrepo').value,
+          githubToken: body.querySelector('#ig-ghtok').value,
+        };
+        btn.disabled = true; st.style.color = ''; st.textContent = 'Saving…';
+        api('/api/integrations', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) }).then(function (res) {
+          if (!res.ok || !res.j.ok) { btn.disabled = false; st.style.color = '#E0A848'; st.textContent = '✗ ' + ((res.j && res.j.error) || 'save failed'); return; }
+          caps.integrations = res.j.integrations;
+          caps.hasClaude = res.j.integrations.hasClaude;
+          caps.hasLinear = !!(res.j.integrations.linearProjectId && res.j.integrations.hasLinearKey);
+          renderIntegrations();   // refresh status dots + clear the password fields
+          body.querySelector('#ig-st').style.color = '#97C459';
+          body.querySelector('#ig-st').textContent = '✓ saved — applies to Assess/Apply now';
+        }).catch(function (e) { btn.disabled = false; st.style.color = '#E0A848'; st.textContent = '✗ ' + e.message; });
+      });
     }
 
     function renderProduct() {
