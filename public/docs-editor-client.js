@@ -138,6 +138,28 @@
     '.pwe-applied-row{padding:10px 14px;border-bottom:1px solid #2A2A2E;font-size:14px;color:#E8E8E4}',
     '.pwe-applied-row:last-child{border-bottom:none}',
     '.pwe-applied-row a{color:#97C459;font-family:ui-monospace,Menlo,monospace}',
+    // diagram draft preview (swim-lane) — mirrors the docs architecture page
+    '.pwe-diag{border:1px solid #534AB7;background:rgba(169,155,224,.06);border-radius:11px;padding:12px 14px;margin:10px 0}',
+    '.pwe-diag .pwe-diag-h{display:flex;align-items:center;gap:10px;margin-bottom:8px}',
+    '.pwe-diag .pwe-diag-h b{font-size:14px}.pwe-diag .pwe-diag-h .grow{flex:1}',
+    '.pwe-fs{position:fixed;inset:0;z-index:10080;background:#0E0E10;overflow:auto;padding:24px}',
+    '.pwe-fs .pwe-fs-x{position:fixed;top:16px;right:20px;background:#161618;border:1px solid #2A2A2E;color:#E8E8E4;border-radius:8px;padding:8px 14px;cursor:pointer;z-index:2}',
+    '.al-wrap{position:relative;background:#141417;border:1px solid #2A2A2E;border-radius:14px;padding:6px 20px 16px;overflow-x:auto}',
+    '.al-edges{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:1}',
+    '.al-layer{display:grid;grid-template-columns:140px 1fr;align-items:center;gap:18px;padding:16px 0;position:relative;z-index:2}',
+    '.al-layer+.al-layer{border-top:1px solid rgba(255,255,255,.04)}',
+    '.al-label{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#6A6A66;font-weight:600}',
+    '.al-row{display:flex;gap:16px;align-items:stretch;justify-content:center;flex-wrap:nowrap}.al-row.pipe{justify-content:flex-start}',
+    '.al-node{background:#161618;border:1px solid #3A3A40;border-radius:11px;padding:11px 14px;flex:0 1 auto;min-width:140px;max-width:300px}.al-node.app{max-width:420px}',
+    '.al-node .eye{font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:#6A6A66;margin-bottom:4px}',
+    '.al-node .ti{font-size:14px;font-weight:600;margin:0 0 4px;color:#E8E8E4}',
+    '.al-node .ln,.al-node .bu{font-size:12px;color:#9A9A95;line-height:1.45}.al-node .bu{margin-top:3px}',
+    '.al-subs{display:flex;gap:10px;margin-top:10px}.al-sub{flex:1;background:rgba(255,255,255,.02);border:1px solid #2A2A2E;border-radius:8px;padding:7px 9px}',
+    '.al-sub .sh{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#6A6A66;margin-bottom:3px}.al-sub .sl{font-size:11px;color:#9A9A95;line-height:1.4}',
+    '.al-node.app{background:linear-gradient(180deg,rgba(151,196,89,.08),#161618);border-color:#639922}.al-node.app .ti{color:#C0DD97}',
+    '.al-node.saas{background:#1f1b30;border-color:#534AB7}.al-node.saas .ti{color:#A99BE0}',
+    '.al-node.data{background:#15212a;border-color:#3E7EA0}.al-node.data .ti{color:#8FC5E0}',
+    '.al-node.edge{background:#15171a;border-color:#3A3A40}.al-node.infra{background:#2a2212;border-color:#876318}.al-node.infra .ti{color:#E0A848}',
     '.pwe-empty{color:#9A9A95;font-size:14px;padding:24px 4px;text-align:center}',
     // file browser (Export / code)
     '.pwe-brow{display:flex;height:64vh;min-height:360px;border-top:1px solid #2A2A2E}',
@@ -376,6 +398,20 @@
     var sum = el('<div class="pwe-body"></div>');
     sum.appendChild(el('<p class="pwe-hint">' + esc(result.summary || 'Review each change, then apply the ones you accept.') + '</p>'));
     if (!result.hasLinear) sum.appendChild(el('<p class="pwe-hint">No Linear tracker linked — doc changes apply but no issues sync.</p>'));
+
+    // Architecture diagram draft — the assessment regenerated it because the
+    // change affects the architecture. Preview it (full-screen) before committing.
+    var draft = result.architectureDraft;
+    var draftOk = draft && draft.architecture && (draft.architecture.layers || []).length;
+    if (draftOk) {
+      sum.appendChild(el('<div class="pwe-grp">Architecture diagram (updated)</div>'));
+      var dcard = el('<div class="pwe-diag"><div class="pwe-diag-h"><label class="pwe-acc" style="margin:0"><input type="checkbox" class="pwe-diag-cb" checked> accept the updated diagram</label><span class="grow"></span><button class="pwe-btn" type="button" id="pwe-fs-btn">⛶ Full screen</button></div></div>');
+      var swEl = buildSwim(draft.architecture);
+      dcard.appendChild(swEl);
+      dcard.querySelector('#pwe-fs-btn').addEventListener('click', function () { openDiagramFull(draft.architecture); });
+      sum.appendChild(dcard);
+      setTimeout(function () { drawSwim(swEl, draft.architecture.edges); }, 80);
+    }
     var groups = { doc: 'Documentation', linear: 'Linear issues', 'affected-closed': 'Affected completed issues', code: 'Code impact' };
     Object.keys(groups).forEach(function (g) {
       var arr = units.filter(function (u) { return u.group === g; });
@@ -396,8 +432,10 @@
 
     applyBtn.addEventListener('click', function () {
       var accepted = Array.prototype.slice.call(m.mod.querySelectorAll('.pwe-cb:checked')).map(function (cb) { return cb.getAttribute('data-uid'); });
-      applyBtn.disabled = true; status.className = 'pwe-status'; status.innerHTML = '<span class="pwe-spin"></span>Applying ' + accepted.length + ' change(s) — writing docs' + (result.hasLinear ? ' + syncing Linear' : '') + '…';
-      api('/api/apply', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ proposed: proposed, units: units, accepted: accepted, summary: result.summary }) })
+      var diagCb = m.mod.querySelector('.pwe-diag-cb');
+      var archBody = (diagCb && diagCb.checked && result.architectureDraft) ? result.architectureDraft : null;
+      applyBtn.disabled = true; status.className = 'pwe-status'; status.innerHTML = '<span class="pwe-spin"></span>Applying ' + accepted.length + ' change(s) — writing docs' + (archBody ? ' + diagram' : '') + (result.hasLinear ? ' + syncing Linear' : '') + '…';
+      api('/api/apply', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ proposed: proposed, units: units, accepted: accepted, summary: result.summary, architecture: archBody }) })
         .then(function (res) {
           applyBtn.disabled = false; var j = res.j || {};
           if (!res.ok) { status.className = 'pwe-status err'; status.textContent = '✗ ' + (j.error || 'apply failed'); return; }
@@ -530,6 +568,50 @@
       // open a sensible first file (PLAN-INTAKE.json or the first doc)
       var first = tree.querySelector('.pwe-trow[data-path]'); if (first) first.click();
     });
+  }
+
+  // ── swim-lane diagram renderer (for the Assess diagram-draft preview) ─────────
+  function buildSwim(arch) {
+    var wrap = el('<div class="al-wrap"><svg class="al-edges"></svg></div>');
+    (arch.layers || []).forEach(function (L) {
+      var pipe = /ci|cd|deploy|build|pipeline/i.test(L.label) ? ' pipe' : '';
+      var nodes = (L.nodes || []).map(function (n) {
+        var lines = (n.lines || []).length ? '<div class="ln">' + (n.lines || []).map(esc).join('<br>') + '</div>' : '';
+        var bullets = (n.bullets || []).length ? '<div class="bu">' + (n.bullets || []).map(function (b) { return '• ' + esc(b); }).join('<br>') + '</div>' : '';
+        var subs = (n.subs || []).length ? '<div class="al-subs">' + (n.subs || []).map(function (s) { return '<div class="al-sub"><div class="sh">' + esc(s.head) + '</div><div class="sl">' + (s.lines || []).map(esc).join('<br>') + '</div></div>'; }).join('') + '</div>' : '';
+        return '<div class="al-node ' + esc(n.cls || 'edge') + '" data-id="' + esc(String(n.id)) + '">' + (n.eyebrow ? '<div class="eye">' + esc(n.eyebrow) + '</div>' : '') + '<div class="ti">' + esc(n.title) + '</div>' + lines + bullets + subs + '</div>';
+      }).join('');
+      wrap.appendChild(el('<div class="al-layer"><div class="al-label">' + esc(L.label) + '</div><div class="al-row' + pipe + '">' + nodes + '</div></div>'));
+    });
+    return wrap;
+  }
+  function drawSwim(wrap, edges) {
+    var svg = wrap.querySelector('.al-edges'); if (!svg) return;
+    var W = wrap.scrollWidth, H = wrap.scrollHeight;
+    svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H); svg.setAttribute('width', W); svg.setAttribute('height', H);
+    var br = wrap.getBoundingClientRect(), byId = {};
+    wrap.querySelectorAll('.al-node[data-id]').forEach(function (n) { byId[n.getAttribute('data-id')] = n; });
+    var P = '', Lb = '', defs = '<defs><marker id="alarp" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#6A6A6E"/></marker></defs>';
+    (edges || []).forEach(function (e) {
+      var a = byId[e.from], b = byId[e.to]; if (!a || !b) return;
+      var ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
+      var ax = ra.left + ra.width / 2 - br.left, ay, bx = rb.left + rb.width / 2 - br.left, by;
+      if (rb.top >= ra.bottom - 2) { ay = ra.bottom - br.top; by = rb.top - br.top; }
+      else if (rb.bottom <= ra.top + 2) { ay = ra.top - br.top; by = rb.bottom - br.top; }
+      else { ay = ra.top + ra.height / 2 - br.top; by = rb.top + rb.height / 2 - br.top; if (bx > ax) { ax = ra.right - br.left; bx = rb.left - br.left; } else { ax = ra.left - br.left; bx = rb.right - br.left; } }
+      var k = e.kind, col = (k === 'deploy' || k === 'critical') ? '#5d7a3a' : k === 'webhook' ? '#9a7a30' : '#4a4a52';
+      var ds = (k === 'webhook' || k === 'backup') ? ' stroke-dasharray="5 4"' : '', my = (ay + by) / 2;
+      P += '<path d="M ' + ax + ' ' + ay + ' C ' + ax + ' ' + my + ' ' + bx + ' ' + my + ' ' + bx + ' ' + by + '" fill="none" stroke="' + col + '" stroke-width="1.5"' + ds + ' marker-end="url(#alarp)"/>';
+      if (e.label) { var lw = String(e.label).length * 6.6 + 8, lx = (ax + bx) / 2; Lb += '<rect x="' + (lx - lw / 2) + '" y="' + (my - 9) + '" width="' + lw + '" height="16" rx="4" fill="#141417"/><text x="' + lx + '" y="' + (my + 3) + '" fill="#9A9A95" font-size="11" text-anchor="middle">' + esc(e.label) + '</text>'; }
+    });
+    svg.innerHTML = defs + P + Lb;
+  }
+  function openDiagramFull(arch) {
+    var fs = el('<div class="pwe-fs"></div>');
+    var x = el('<button class="pwe-fs-x">✕ Close</button>');
+    x.addEventListener('click', function () { fs.remove(); });
+    var w = buildSwim(arch); fs.appendChild(x); fs.appendChild(w); document.body.appendChild(fs);
+    setTimeout(function () { drawSwim(w, arch.edges); }, 60);
   }
 
   // ── boot ─────────────────────────────────────────────────────────────────────
