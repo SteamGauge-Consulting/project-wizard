@@ -32,6 +32,10 @@ const KIT = path.join(__dirname, 'lib', 'docs-kit.js');
 app.use(express.json({ limit: '2mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
+// The wizard's own build (git short SHA, baked by scripts/update.sh) — shown in the
+// GUI so you can confirm the page is running the latest version.
+app.get('/api/version', (req, res) => res.json({ version: process.env.BUILD_VERSION || 'dev' }));
+
 // ─── helpers ────────────────────────────────────────────────────────────────
 const emptyAnswers = () => ({
   product: {}, integrations: {}, requirements: [], decisions: [], milestones: [], risks: [], scalability: [],

@@ -12,6 +12,9 @@
   <span class="brand-sub">plan a project · generate its /docs</span>
 </header>
 <main id="app"><div class="loading">loading…</div></main>
+<div id="pw-build" title="wizard build (git SHA) — confirm you're on the latest"
+     style="position:fixed;left:10px;bottom:8px;z-index:9999;font:11px/1 ui-monospace,Menlo,monospace;color:#6A6A66;pointer-events:none;user-select:text">build …</div>
+<script>fetch('/api/version').then(function(r){return r.json();}).then(function(j){var el=document.getElementById('pw-build');if(el)el.textContent='build '+(j&&j.version||'?');}).catch(function(){});</script>
 <script src="/wizard.js"></script>
 <script src="/app.js"></script>
 </body>
