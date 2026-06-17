@@ -814,7 +814,7 @@ app.post('/api/projects/:id/deploy', (req, res) => {
   const usePassword = !!(b.password && String(b.password).trim());
 
   const wizardUrl = (req.protocol || 'http') + '://' + req.get('host');
-  const params = { name: b.name || p.name, host: b.host, sshUser: b.user, sshPort: b.sshPort, port: b.port, hostname: b.hostname, linearKey: b.linearKey, anthropicKey: b.apiKey, linearProjectId: b.linearProjectId || p.linearProjectId, wizardUrl: wizardUrl, wizardProjectId: p.id };
+  const params = { name: b.name || p.name, host: b.host, sshUser: b.user, sshPort: b.sshPort, port: b.port, hostname: b.hostname, linearKey: b.linearKey, anthropicKey: b.apiKey, linearProjectId: b.linearProjectId || p.linearProjectId, wizardUrl: wizardUrl, wizardProjectId: p.id, buildVersion: (process.env.BUILD_VERSION || 'dev') };
   const name = deployBundle.slugify(params.name);
   const user = (b.user || 'docker').trim();
   const host = String(b.host).trim();

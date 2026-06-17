@@ -16,6 +16,11 @@ ENV DATA_DIR=/app/data/projects
 ENV GEN_DIR=/app/data/generated
 VOLUME ["/app/data"]
 
+# Build version (git short SHA), passed by scripts/update.sh as a build-arg and
+# read by the wizard so it can stamp each deployed pod (shown in the ☰ menu).
+ARG BUILD_VERSION=dev
+ENV BUILD_VERSION=$BUILD_VERSION
+
 ENV PORT=4500
 EXPOSE 4500
 CMD ["node", "server.js"]

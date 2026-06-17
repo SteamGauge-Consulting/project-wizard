@@ -1,6 +1,9 @@
 services:
   project-wizard:
-    build: .
+    build:
+      context: .
+      args:
+        BUILD_VERSION: "${BUILD_VERSION:-dev}"   # set by scripts/update.sh (git short SHA)
     # If you publish an image instead of building on the server, swap `build` for:
     #   image: ghcr.io/<owner>/project-wizard:latest
     container_name: project-wizard

@@ -25,7 +25,10 @@ git checkout -q "$BRANCH" 2>/dev/null || git checkout -q -b "$BRANCH" "origin/$B
 git reset --hard "origin/$BRANCH"
 
 echo "→ rebuilding + restarting container"
+# Stamp the build with the git short SHA so the wizard (and the pods it deploys)
+# can show which version is running.
+export BUILD_VERSION="$(git rev-parse --short HEAD)"
 docker compose up -d --build
 docker image prune -f >/dev/null 2>&1 || true
 
-echo "✓ updated to $(git rev-parse --short HEAD) on $BRANCH"
+echo "✓ updated to $BUILD_VERSION on $BRANCH"

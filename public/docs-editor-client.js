@@ -74,6 +74,7 @@
     '.pwe-menu button{display:flex;gap:9px;align-items:center;width:100%;text-align:left;color:#E8E8E4;background:none;border:none;padding:9px 11px;border-radius:7px;cursor:pointer;font:inherit;font-size:14px}',
     '.pwe-menu button:hover{background:rgba(255,255,255,.06)}',
     '.pwe-menu .pwe-sub{font-size:11px;color:#6A6A66;padding:7px 11px 3px;letter-spacing:.1em;text-transform:uppercase}',
+    '.pwe-ver{font-size:11px;color:#6A6A66;padding:8px 11px 3px;margin-top:4px;border-top:1px solid #2A2A2E;font-family:ui-monospace,Menlo,monospace}',
     '.pwe-bg{position:fixed;inset:0;z-index:10060;background:rgba(8,8,10,.72);-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px);display:flex;align-items:flex-start;justify-content:center;padding:34px 16px;overflow:auto}',
     '.pwe-modal{width:100%;max-width:1280px;background:#0E0E10;border:1px solid #2A2A2E;border-radius:14px;color:#E8E8E4;font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;box-shadow:0 30px 80px rgba(0,0,0,.6);overflow:hidden}',
     '.pwe-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 20px;border-bottom:1px solid #2A2A2E;position:sticky;top:0;background:#0E0E10;z-index:2}',
@@ -181,10 +182,12 @@
 
   // ── nav wiring: Changelog tab + hamburger menu ───────────────────────────────
   var caps = null; // { hasClaude, hasLinear, hasCorpus }
+  var buildVersion = ''; // the wizard build this pod was deployed from (☰ footer)
 
   function mountNav() {
     var nav = document.querySelector('nav.docs-nav');
     if (!nav) return;
+    api('/api/version').then(function (r) { if (r.ok && r.j) buildVersion = r.j.version || ''; }).catch(function () {});
     var appLink = nav.querySelector('a.nav-app') || nav.querySelector('a[href="/"]'); // the "← App" link
 
     // "← App" returns to the project-wizard homepage (project tiles), derived from
@@ -232,6 +235,7 @@
     var upd = el('<button>Update app</button>');
     upd.addEventListener('click', function () { m.remove(); openUpdateApp(); });
     m.appendChild(upd);
+    m.appendChild(el('<div class="pwe-ver">build ' + esc(buildVersion || '—') + '</div>'));
     return m;
   }
 
