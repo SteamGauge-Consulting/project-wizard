@@ -466,23 +466,24 @@ app.post('/api/projects/:id/build-full', async (req, res) => {
   }
   if (!enrich && (apiKey || enrichLib.aiEnabled())) {
     try {
-      let corpus = null;
-      try { corpus = reverse.buildCorpus(storage.attachmentsDir(p.id)); } catch (e) {}
-      const fullCorpus = corpus && corpus.includedCount ? corpus : null;
-      enrich = await enrichLib.enrich(intake, apiKey, fullCorpus, onProgress);
-      // The build plan gets its OWN call PER MILESTONE (full output budget each, with
-      // the full intake + codebase + governance library as input), then a final
-      // cohesion review against requirements + governance. pr.usage carries per-call
-      // token counts; pr.review carries what the cohesion pass added/removed.
+      // AGENTIC enrichment: the model EXPLORES the upload on demand (list/read/search)
+      // instead of prefilling the whole codebase — ~100× cheaper + grounds each issue
+      // in code it actually read. buildFileIndex exposes the files; cleanup() after.
+      let index = null;
+      try { index = reverse.buildFileIndex(storage.attachmentsDir(p.id)); } catch (e) {}
       try {
-        const pr = await enrichLib.enrichPlan(intake, apiKey, fullCorpus, onProgress);
-        plan = pr.plan;
-        out.planTokens = pr.usage;
-        out.cohesion = pr.review;
-        const cut = (pr.usage || []).filter((u) => u.truncated);
-        if (cut.length) out.planTruncated = cut.map((u) => u.pass);   // any pass that hit the cap
-      }
-      catch (e) { out.planError = 'plan enrichment failed: ' + (e.message || e); plan = null; }
+        enrich = await enrichLib.enrich(intake, apiKey, index, onProgress);
+        // Plan: a continuous agentic session, one milestone at a time (reads + prior
+        // issues accumulate), compacting only near the context limit, then a cohesion
+        // review. pr.usage carries per-call token counts; pr.review what it added/removed.
+        try {
+          const pr = await enrichLib.enrichPlan(intake, apiKey, index, onProgress);
+          plan = pr.plan;
+          out.planTokens = pr.usage;
+          out.cohesion = pr.review;
+        }
+        catch (e) { out.planError = 'plan enrichment failed: ' + (e.message || e); plan = null; }
+      } finally { if (index && index.cleanup) { try { index.cleanup(); } catch (e) {} } }
       if (plan && plan.length) enrich.plan = plan;   // cache alongside the docs enrichment
       out.enriched = true;
       out.counts = { requirements: (intake.requirements || []).length, decisions: (intake.decisions || []).length, milestones: (intake.milestones || []).length };
