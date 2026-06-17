@@ -667,6 +667,25 @@ app.post('/api/projects/:id/apply-changes', async (req, res) => {
   res.json({ ok: true, changeId, applied, errors, project: summarize(p) });
 });
 
+// Proxy an edit to the DEPLOYED pod's own editor API, so editing a deployed
+// project from the wizard updates the pod's LIVE data (no rebuild, no SSH — the
+// pod re-renders in place via its bind mount, using its baked keys + corpus).
+function podOrigin(p) { return p.deployUrl ? String(p.deployUrl).replace(/\/docs\/?$/, '') : null; }
+app.all('/api/projects/:id/pod/:action(assess|apply|intake|changes)', async (req, res) => {
+  const p = storage.getProject(req.params.id);
+  if (!p) return res.status(404).json({ error: 'not found' });
+  const origin = podOrigin(p);
+  if (!origin) return res.status(400).json({ error: 'this project is not deployed yet — use Build plan first', code: 'not_deployed' });
+  const get = req.method === 'GET' || req.params.action === 'intake' || req.params.action === 'changes';
+  try {
+    const r = await fetch(origin + '/api/' + req.params.action, Object.assign(
+      { method: get ? 'GET' : 'POST', headers: { 'content-type': 'application/json' } },
+      get ? {} : { body: JSON.stringify(req.body || {}) }));
+    const text = await r.text();
+    res.status(r.status).type('application/json').send(text);
+  } catch (e) { res.status(502).json({ error: 'could not reach the deployed pod (' + origin + '): ' + (e.message || e) }); }
+});
+
 // ─── browse / download the generated structure ──────────────────────────────
 function walkTree(root) {
   const out = [];

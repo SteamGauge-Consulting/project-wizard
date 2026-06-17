@@ -121,6 +121,7 @@
     // older PLAN-INTAKE shapes that predate scalability simply get an empty row.
     Object.keys(TABLES).forEach(function (t) { if (!answers[t] || !answers[t].length) answers[t] = [emptyRow(t)]; });
     var cur = 0, saveTimer = null, saveEl;
+    var deployed = !!project.deployUrl;   // already live → edits "Assess changes" against the pod
 
     function scheduleSave() {
       if (saveEl) saveEl.textContent = 'saving…';
@@ -136,7 +137,11 @@
     }
 
     mount.innerHTML =
-      '<div class="wiz-top"><div class="title" id="wiz-title"></div><div class="save" id="wiz-save"></div></div>' +
+      '<div class="wiz-top"><div class="title" id="wiz-title"></div>' +
+        (deployed ? '<div class="wiz-tools"><span class="wiz-live" title="' + esc(project.deployUrl) + '">● live</span>' +
+          '<button class="btn primary sm" id="wiz-assess">✦ Assess changes</button>' +
+          '<button class="btn sm" id="wiz-discard">Discard edits</button></div>' : '') +
+        '<div class="save" id="wiz-save"></div></div>' +
       '<a href="#/" class="hint">← all projects</a>' +
       (project.draftFromCode ? '<div class="warn" style="margin:14px 0 0">✦ <b>Drafted from your uploaded app.</b> Review and correct each field — these are inferred from the code, not confirmed by you.</div>' : '') +
       '<div class="steps" id="wiz-steps"></div>' +
@@ -503,6 +508,133 @@
           prog.innerHTML = '<div class="bp-step ok">✓ Live at <a href="' + esc(d.j.url) + '" target="_blank"><b>' + esc(d.j.url) + '</b></a></div>' + linHtml;
         }).catch(function (e) { btn.disabled = false; step('✗ ' + e.message, 'err'); });
       });
+    }
+
+    // ── deployed-project editing: Assess changes against the LIVE pod ───────────
+    // The pod owns its data; we proxy assess/apply to it (no rebuild) and review
+    // the proposed doc/tracker/diagram changes before committing.
+    function proposedFromAnswers() {
+      var out = { product: answers.product || {}, integrations: answers.integrations || {}, startDate: answers.startDate || '' };
+      Object.keys(TABLES).forEach(function (t) {
+        out[t] = (answers[t] || []).filter(function (r) { return TABLES[t].cols.some(function (c) { return !c.sel && String(r[c.k] || '').trim(); }); });
+      });
+      return out;
+    }
+    function pod(action, body) {
+      return fetch('/api/projects/' + project.id + '/pod/' + action, body ? { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) } : {})
+        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }, function () { return { ok: r.ok, j: {} }; }); });
+    }
+    function E(html) { var d = document.createElement('div'); d.innerHTML = html; return d.firstElementChild; }
+    function bgModal(inner) { var b = document.createElement('div'); b.className = 'modal-bg'; b.innerHTML = '<div class="modal edit-modal">' + inner + '</div>'; document.body.appendChild(b); b.addEventListener('click', function (e) { if (e.target === b) b.remove(); }); return b; }
+    function swim(arch) {
+      var wrap = E('<div class="al-wrap"><svg class="al-edges"></svg></div>');
+      (arch.layers || []).forEach(function (L) {
+        var pipe = /ci|cd|deploy|build|pipeline/i.test(L.label) ? ' pipe' : '';
+        var nodes = (L.nodes || []).map(function (n) {
+          var ln = (n.lines || []).length ? '<div class="ln">' + n.lines.map(esc).join('<br>') + '</div>' : '';
+          var bu = (n.bullets || []).length ? '<div class="bu">' + n.bullets.map(function (b) { return '• ' + esc(b); }).join('<br>') + '</div>' : '';
+          var su = (n.subs || []).length ? '<div class="al-subs">' + n.subs.map(function (s) { return '<div class="al-sub"><div class="sh">' + esc(s.head) + '</div><div class="sl">' + (s.lines || []).map(esc).join('<br>') + '</div></div>'; }).join('') + '</div>' : '';
+          return '<div class="al-node ' + esc(n.cls || 'edge') + '" data-id="' + esc(String(n.id)) + '">' + (n.eyebrow ? '<div class="eye">' + esc(n.eyebrow) + '</div>' : '') + '<div class="ti">' + esc(n.title) + '</div>' + ln + bu + su + '</div>';
+        }).join('');
+        wrap.appendChild(E('<div class="al-layer"><div class="al-label">' + esc(L.label) + '</div><div class="al-row' + pipe + '">' + nodes + '</div></div>'));
+      });
+      return wrap;
+    }
+    function drawSwim(wrap, edges) {
+      var svg = wrap.querySelector('.al-edges'); if (!svg) return;
+      var W = wrap.scrollWidth, H = wrap.scrollHeight; svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H); svg.setAttribute('width', W); svg.setAttribute('height', H);
+      var br = wrap.getBoundingClientRect(), byId = {}; wrap.querySelectorAll('.al-node[data-id]').forEach(function (n) { byId[n.getAttribute('data-id')] = n; });
+      var P = '', Lb = '', defs = '<defs><marker id="wlar" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#6A6A6E"/></marker></defs>';
+      (edges || []).forEach(function (e) {
+        var a = byId[e.from], b = byId[e.to]; if (!a || !b) return;
+        var ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
+        var ax = ra.left + ra.width / 2 - br.left, ay, bx = rb.left + rb.width / 2 - br.left, by;
+        if (rb.top >= ra.bottom - 2) { ay = ra.bottom - br.top; by = rb.top - br.top; }
+        else if (rb.bottom <= ra.top + 2) { ay = ra.top - br.top; by = rb.bottom - br.top; }
+        else { ay = ra.top + ra.height / 2 - br.top; by = rb.top + rb.height / 2 - br.top; if (bx > ax) { ax = ra.right - br.left; bx = rb.left - br.left; } else { ax = ra.left - br.left; bx = rb.right - br.left; } }
+        var k = e.kind, col = (k === 'deploy' || k === 'critical') ? '#5d7a3a' : k === 'webhook' ? '#9a7a30' : '#4a4a52', ds = (k === 'webhook' || k === 'backup') ? ' stroke-dasharray="5 4"' : '', my = (ay + by) / 2;
+        P += '<path d="M ' + ax + ' ' + ay + ' C ' + ax + ' ' + my + ' ' + bx + ' ' + my + ' ' + bx + ' ' + by + '" fill="none" stroke="' + col + '" stroke-width="1.5"' + ds + ' marker-end="url(#wlar)"/>';
+        if (e.label) { var lw = String(e.label).length * 6.6 + 8, lx = (ax + bx) / 2; Lb += '<rect x="' + (lx - lw / 2) + '" y="' + (my - 9) + '" width="' + lw + '" height="16" rx="4" fill="#141417"/><text x="' + lx + '" y="' + (my + 3) + '" fill="#9A9A95" font-size="11" text-anchor="middle">' + esc(e.label) + '</text>'; }
+      });
+      svg.innerHTML = defs + P + Lb;
+    }
+    function unitCard(u) {
+      var inner = '';
+      if (u.group === 'doc') {
+        (u.scalars || []).forEach(function (s) { inner += '<div class="chg-row"><b>' + esc(s.field) + '</b>: <span class="was">' + esc(s.before || '∅') + '</span> → <span class="now">' + esc(s.after || '∅') + '</span></div>'; });
+        (u.added || []).forEach(function (r) { inner += '<div class="chg-row add">+ ' + esc(JSON.stringify(r).slice(0, 150)) + '</div>'; });
+        (u.removed || []).forEach(function (r) { inner += '<div class="chg-row del">− ' + esc(JSON.stringify(r).slice(0, 150)) + '</div>'; });
+        (u.modified || []).forEach(function (m) { inner += '<div class="chg-row">~ ' + esc(JSON.stringify(m.after || m).slice(0, 150)) + '</div>'; });
+        inner = '<div class="chg-kind doc">DOC · ' + esc(u.section) + '</div>' + (u.impact ? '<div class="chg-impact">' + esc(u.impact) + '</div>' : '') + inner;
+      } else if (u.group === 'linear') {
+        inner = '<div class="chg-kind lin">LINEAR · ' + esc(u.action) + (u.issueIdentifier ? ' ' + esc(u.issueIdentifier) : '') + '</div><div class="chg-title">' + esc(u.title || '') + '</div>' + (u.reason ? '<div class="chg-reason">' + esc(u.reason) + '</div>' : '');
+      } else if (u.group === 'affected-closed') {
+        inner = '<div class="chg-kind closed">CLOSED · ' + esc(u.issueIdentifier) + '</div><div class="chg-reason">' + esc(u.reason || '') + '</div>';
+      } else if (u.group === 'code') {
+        inner = '<div class="chg-kind code">CODE · ' + esc(u.area || '') + '</div><div class="chg-impact">' + esc(u.detail || '') + '</div>';
+      }
+      var c = E('<div class="chg-card"><label class="chg-acc"><input type="checkbox" class="chg-cb" checked> accept</label><div class="chg-main">' + inner + '</div></div>');
+      c.querySelector('.chg-cb').setAttribute('data-uid', u.id);
+      return c;
+    }
+    function assessReview(result, proposed) {
+      var units = result.units || [];
+      var b = bgModal('<h3>✦ Assess changes</h3><p class="chg-summary">' + esc(result.summary || '') + '</p>' +
+        '<div class="edit-body" id="wz-rev"></div>' +
+        '<div class="edit-foot"><div style="display:flex;gap:8px;align-items:center"><button class="btn sm primary" id="wz-apply">Apply accepted</button><button class="btn sm" id="wz-cancel">Back to editing</button><span class="hint" id="wz-st"></span></div></div>');
+      var body = b.querySelector('#wz-rev'), st = b.querySelector('#wz-st');
+      var draft = result.architectureDraft, draftOk = draft && draft.architecture && (draft.architecture.layers || []).length;
+      if (draftOk) {
+        body.appendChild(E('<h4 class="chg-grp">Architecture diagram (updated)</h4>'));
+        var dc = E('<div class="chg-card"><label class="chg-acc"><input type="checkbox" id="wz-diag-cb" checked> accept the updated diagram</label> <button class="btn xs" id="wz-fs" type="button">⛶ Full screen</button></div>');
+        var sw = swim(draft.architecture); dc.appendChild(sw); body.appendChild(dc);
+        dc.querySelector('#wz-fs').addEventListener('click', function () { var fb = document.createElement('div'); fb.className = 'modal-bg'; var w = swim(draft.architecture); w.style.maxWidth = '95vw'; var box = E('<div class="modal" style="max-width:96vw;width:96vw"><h3>Architecture — updated</h3></div>'); box.appendChild(w); fb.appendChild(box); document.body.appendChild(fb); fb.addEventListener('click', function (e) { if (e.target === fb) fb.remove(); }); setTimeout(function () { drawSwim(w, draft.architecture.edges); }, 60); });
+        setTimeout(function () { drawSwim(sw, draft.architecture.edges); }, 90);
+      }
+      var groups = { doc: 'Documentation', linear: 'Linear issues', 'affected-closed': 'Affected completed issues', code: 'Code impact' };
+      Object.keys(groups).forEach(function (g) { var arr = units.filter(function (u) { return u.group === g; }); if (!arr.length) return; body.appendChild(E('<h4 class="chg-grp">' + groups[g] + ' (' + arr.length + ')</h4>')); arr.forEach(function (u) { body.appendChild(unitCard(u)); }); });
+      if (!units.length && !draftOk) body.appendChild(E('<p class="hint">No actionable changes detected.</p>'));
+      b.querySelector('#wz-cancel').addEventListener('click', function () { b.remove(); });
+      b.querySelector('#wz-apply').addEventListener('click', function () {
+        var accepted = Array.prototype.slice.call(b.querySelectorAll('.chg-cb:checked')).map(function (cb) { return cb.getAttribute('data-uid'); });
+        var dcb = b.querySelector('#wz-diag-cb');
+        var btn = this; btn.disabled = true; st.textContent = 'Applying to the live pod…';
+        pod('apply', { proposed: proposed, units: units, accepted: accepted, summary: result.summary, architecture: (dcb && dcb.checked && draft) ? draft : null }).then(function (res) {
+          btn.disabled = false; var j = res.j || {};
+          if (!res.ok) { st.style.color = 'var(--red)'; st.textContent = '✗ ' + (j.error || 'apply failed'); return; }
+          var a = j.applied || {}, lin = (a.linear || []).concat(a.affectedClosed || []);
+          var links = lin.map(function (x) { var id = x.identifier || x; return x.url ? '<a href="' + esc(x.url) + '" target="_blank">' + esc(id) + '</a>' : esc(id); }).join(', ');
+          b.querySelector('.edit-body').innerHTML = '<p>✓ <b>' + esc(j.changeId) + '</b> applied to the live pod · ' + (a.docSections || []).length + ' section(s)' + (links ? '<br>Linear: ' + links : '') + '</p><p class="hint">The docs update live — no redeploy.</p>';
+          st.textContent = '';
+          b.querySelector('#wz-apply').textContent = 'Done'; b.querySelector('#wz-apply').onclick = function () { b.remove(); };
+          b.querySelector('#wz-cancel').textContent = 'Open live docs ↗'; b.querySelector('#wz-cancel').onclick = function () { window.open(project.deployUrl, '_blank'); };
+        }).catch(function (e) { btn.disabled = false; st.style.color = 'var(--red)'; st.textContent = '✗ ' + e.message; });
+      });
+    }
+    function doAssess() {
+      doSave();
+      var b = bgModal('<h3>✦ Assess changes</h3><p class="hint" id="wz-as">Assessing against the live pod — code, tracker, and diagram… (can take a minute)</p>');
+      pod('assess', { proposed: proposedFromAnswers() }).then(function (res) {
+        b.remove(); var j = res.j || {};
+        if (!res.ok) { bgModal('<h3>Assess</h3><p class="warn">✗ ' + esc(j.error || 'assess failed') + (j.detail ? '<br>' + esc(j.detail) : '') + '</p><div class="row"><button class="btn" onclick="this.closest(\'.modal-bg\').remove()">Close</button></div>'); return; }
+        if (j.empty) { bgModal('<h3>Assess</h3><p class="hint">' + esc(j.message || 'No changes to assess.') + '</p><div class="row"><button class="btn" onclick="this.closest(\'.modal-bg\').remove()">Close</button></div>'); return; }
+        assessReview(j, proposedFromAnswers());
+      }).catch(function (e) { b.remove(); bgModal('<h3>Assess</h3><p class="warn">✗ ' + esc(e.message) + '</p><div class="row"><button class="btn" onclick="this.closest(\'.modal-bg\').remove()">Close</button></div>'); });
+    }
+    function doDiscard() {
+      if (!confirm('Discard your edits and reload the live plan from the pod?')) return;
+      pod('intake').then(function (res) {
+        if (res.ok && res.j && res.j.intake) {
+          var k = res.j.intake; answers.product = k.product || {}; answers.integrations = k.integrations || answers.integrations || {}; answers.startDate = k.startDate || '';
+          Object.keys(TABLES).forEach(function (t) { answers[t] = (k[t] && k[t].length) ? k[t] : [emptyRow(t)]; });
+          doSave(); go(cur);
+        }
+      });
+    }
+    if (deployed) {
+      var ab = mount.querySelector('#wiz-assess'), db = mount.querySelector('#wiz-discard');
+      if (ab) ab.addEventListener('click', doAssess);
+      if (db) db.addEventListener('click', doDiscard);
     }
 
     mount.querySelector('#wiz-back').addEventListener('click', function () { go(cur - 1); });

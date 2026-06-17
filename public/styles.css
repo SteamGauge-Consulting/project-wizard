@@ -102,6 +102,27 @@ table.rows td:last-child{width:34px;padding-right:0;}
 .add:hover{color:var(--accent);border-color:var(--accent);}
 
 .wiz-nav{display:flex;justify-content:space-between;margin-top:22px;}
+/* deployed-edit toolbar */
+.wiz-tools{display:flex;align-items:center;gap:8px;}
+.wiz-live{color:var(--accent);font-size:12px;letter-spacing:.04em;}
+.btn.xs{padding:3px 9px;font-size:11px;}
+/* swim-lane diagram preview (assess modal) — mirrors the docs architecture page */
+.al-wrap{position:relative;background:#141417;border:1px solid var(--line);border-radius:12px;padding:6px 18px 14px;overflow-x:auto;margin:8px 0;}
+.al-edges{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:1;}
+.al-layer{display:grid;grid-template-columns:130px 1fr;align-items:center;gap:16px;padding:14px 0;position:relative;z-index:2;}
+.al-layer+.al-layer{border-top:1px solid rgba(255,255,255,.04);}
+.al-label{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);font-weight:600;}
+.al-row{display:flex;gap:14px;align-items:stretch;justify-content:center;flex-wrap:nowrap;}.al-row.pipe{justify-content:flex-start;}
+.al-node{background:var(--panel);border:1px solid var(--line2);border-radius:10px;padding:10px 13px;flex:0 1 auto;min-width:130px;max-width:280px;}.al-node.app{max-width:400px;}
+.al-node .eye{font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);margin-bottom:3px;}
+.al-node .ti{font-size:13.5px;font-weight:600;margin:0 0 4px;color:var(--text);}
+.al-node .ln,.al-node .bu{font-size:11.5px;color:var(--muted);line-height:1.4;}.al-node .bu{margin-top:3px;}
+.al-subs{display:flex;gap:8px;margin-top:9px;}.al-sub{flex:1;background:rgba(255,255,255,.02);border:1px solid var(--line);border-radius:7px;padding:6px 8px;}
+.al-sub .sh{font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);margin-bottom:2px;}.al-sub .sl{font-size:10.5px;color:var(--muted);line-height:1.4;}
+.al-node.app{background:linear-gradient(180deg,rgba(151,196,89,.08),var(--panel));border-color:#639922;}.al-node.app .ti{color:var(--accent-br);}
+.al-node.saas{background:#1f1b30;border-color:#534AB7;}.al-node.saas .ti{color:var(--violet);}
+.al-node.data{background:#15212a;border-color:#3E7EA0;}.al-node.data .ti{color:#8FC5E0;}
+.al-node.edge{background:#15171a;border-color:var(--line2);}.al-node.infra{background:#2a2212;border-color:#876318;}.al-node.infra .ti{color:var(--amber);}
 
 /* reference uploads */
 .dropzone{margin-top:6px;border:1.5px dashed var(--line2);border-radius:12px;background:var(--panel2);
