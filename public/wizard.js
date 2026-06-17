@@ -477,14 +477,38 @@
         btn.disabled = true; doSave();
         var P = function (url, body) { return fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body || {}) }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); }); };
 
+        // Live agentic-build progress during the 2/3 step (phase, agent indicator, tokens).
+        if (!document.getElementById('pw-pulse-kf')) { var _st = document.createElement('style'); _st.id = 'pw-pulse-kf'; _st.textContent = '@keyframes pw-pulse{0%,100%{opacity:1}50%{opacity:.25}}'; document.head.appendChild(_st); }
+        var bpPoll = null;
+        var fmtK = function (n) { return Math.round((n || 0) / 1000) + 'K'; };
+        var renderBP = function (pg) {
+          if (!pg) return;
+          var rows = [];
+          var dot = pg.agentRunning ? '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#97C459;margin-right:7px;animation:pw-pulse 1s infinite;vertical-align:1px"></span>' : '<span style="color:#6A6A66;margin-right:7px">•</span>';
+          var live = pg.liveTokens ? ' <span style="color:#6A6A66">· ' + fmtK(pg.liveTokens.fresh) + ' fresh / ' + fmtK(pg.liveTokens.cached) + ' cached / ' + fmtK(pg.liveTokens.output) + ' out</span>' : '';
+          rows.push('<div class="bp-step">' + dot + esc(pg.current || pg.phase || '') + live + '</div>');
+          (pg.steps || []).forEach(function (s) {
+            var tk = s.tokens ? '<span style="color:#6A6A66;font-family:ui-monospace,Menlo,monospace;font-size:11px;white-space:nowrap">' + fmtK(s.tokens.fresh) + ' / ' + fmtK(s.tokens.cached) + ' / ' + fmtK(s.tokens.output) + '</span>' : '';
+            rows.push('<div style="display:flex;justify-content:space-between;gap:12px;color:#9A9A95;font-size:12.5px;padding:1px 0"><span>✓ ' + esc(s.label) + (s.note ? ' <span style="color:#6A6A66">(' + esc(s.note) + ')</span>' : '') + '</span>' + tk + '</div>');
+          });
+          var t = pg.totals || {};
+          if (t.fresh || t.cached || t.output) rows.push('<div style="margin-top:6px;color:#6A6A66;font-size:11px">totals: ' + fmtK(t.fresh) + ' fresh · ' + fmtK(t.cached) + ' cached · ' + fmtK(t.output) + ' out</div>');
+          prog.innerHTML = rows.join('');
+        };
+        var clearBP = function () { if (bpPoll) { clearInterval(bpPoll); bpPoll = null; } };
+
         step('1/3 · Generating the doc structure…');
         P('/api/projects/' + project.id + '/generate').then(function (g) {
           if (!g.ok) throw new Error(g.j.detail || g.j.error || 'generate failed');
           var wantAI = key || cfg.aiServerKey;
           if (!wantAI) { step('2/3 · No Claude key — skipping AI build (clean tables only)…'); return { ok: true, j: { skipped: true } }; }
-          step('2/3 · Building docs with AI' + (linKey && teamId ? ' + creating Linear issues' : '') + '… (can take a minute)');
+          step('2/3 · Building docs with AI' + (linKey && teamId ? ' + creating Linear issues' : '') + '… (agent explores your code — several minutes)');
+          bpPoll = setInterval(function () {
+            fetch('/api/projects/' + project.id + '/build-progress').then(function (r) { return r.json(); }).then(function (pg) { if (pg && !pg.done) renderBP(pg); }).catch(function () {});
+          }, 1500);
           return P('/api/projects/' + project.id + '/build-full', { apiKey: key, linearKey: linKey, teamId: teamId });
         }).then(function (b) {
+          clearBP();
           if (b && !b.ok) throw new Error(b.j.error || 'AI build failed');
           window.__bp_linear = b && b.j && b.j.linear;
           if (!host) { return { ok: true, j: { noDeploy: true } }; }
@@ -506,7 +530,7 @@
           }
           if (!d.ok || !d.j.ok) { prog.innerHTML = '<div class="bp-step err">✗ Deploy failed: ' + esc((d.j && d.j.error) || 'unknown') + '</div>' + linHtml + (d.j && d.j.output ? '<pre class="bp-out">' + esc(d.j.output.slice(-2000)) + '</pre>' : ''); return; }
           prog.innerHTML = '<div class="bp-step ok">✓ Live at <a href="' + esc(d.j.url) + '" target="_blank"><b>' + esc(d.j.url) + '</b></a></div>' + linHtml;
-        }).catch(function (e) { btn.disabled = false; step('✗ ' + e.message, 'err'); });
+        }).catch(function (e) { clearBP(); btn.disabled = false; step('✗ ' + e.message, 'err'); });
       });
     }
 
