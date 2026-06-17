@@ -496,6 +496,12 @@ app.post('/api/projects/:id/build-full', async (req, res) => {
       console.error('render-intake (build-full) failed:', e.message);
     }
   }
+  // Persist the enrichment beside the docs so the DEPLOYED in-page editor can
+  // re-render with diagrams/criteria on Apply WITHOUT re-running the AI build.
+  if (enrich) {
+    try { fs.mkdirSync(path.join(dir, '.deploy'), { recursive: true }); fs.writeFileSync(path.join(dir, '.deploy', 'enrich.json'), JSON.stringify(enrich)); }
+    catch (e) { console.error('enrich.json persist failed:', e.message); }
+  }
   // Snapshot this as the live BASELINE for future "Assess Changes" diffs, and
   // remember the last enrichment so apply-changes can re-render with diagrams.
   if (enrich) p.lastEnrich = enrich;

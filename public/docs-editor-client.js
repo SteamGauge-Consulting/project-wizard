@@ -133,6 +133,10 @@
     '.pwe-cl-tech{font-size:12.5px;color:#9A9A95;margin:3px 0 0 22px;white-space:pre-wrap}',
     '.pwe-cl-dot{color:#97C459}',
     '.pwe-cl-err{color:#E06A6A;font-size:12.5px;margin-top:8px}',
+    '.pwe-applied{border:1px solid #2A2A2E;border-radius:10px;overflow:hidden}',
+    '.pwe-applied-row{padding:10px 14px;border-bottom:1px solid #2A2A2E;font-size:14px;color:#E8E8E4}',
+    '.pwe-applied-row:last-child{border-bottom:none}',
+    '.pwe-applied-row a{color:#97C459;font-family:ui-monospace,Menlo,monospace}',
     '.pwe-empty{color:#9A9A95;font-size:14px;padding:24px 4px;text-align:center}',
     // file browser (Export / code)
     '.pwe-brow{display:flex;height:64vh;min-height:360px;border-top:1px solid #2A2A2E}',
@@ -396,13 +400,43 @@
         .then(function (res) {
           applyBtn.disabled = false; var j = res.j || {};
           if (!res.ok) { status.className = 'pwe-status err'; status.textContent = '✗ ' + (j.error || 'apply failed'); return; }
-          var a = j.applied || {};
-          var msg = j.changeId + ' applied · ' + (a.docSections || []).length + ' doc section(s)' + (a.linear && a.linear.length ? ', ' + a.linear.length + ' Linear action(s)' : '');
-          toast(msg + ' — reloading');
-          m.close(); editM.close();
-          setTimeout(function () { location.reload(); }, 900);
+          showApplied(m, editM, j);
         }).catch(function (e) { applyBtn.disabled = false; status.className = 'pwe-status err'; status.textContent = '✗ ' + e.message; });
     });
+  }
+
+  // Applied summary — clickable links to every Linear issue created/updated/
+  // cancelled or flagged, then a Done button that reloads the (now-live) docs.
+  function showApplied(m, editM, j) {
+    var a = j.applied || {};
+    var VERB = { create: 'Created', update: 'Updated', cancel: 'Cancelled' };
+    function issueLink(x, prefix) {
+      var id = (x && (x.identifier || x.title)) || (typeof x === 'string' ? x : '');
+      var url = x && x.url;
+      var tail = (x && x.title && x.identifier) ? ' <span style="color:var(--muted,#9A9A95)">— ' + esc(x.title) + '</span>' : '';
+      return '<div class="pwe-applied-row">' + esc(prefix) + ' ' +
+        (url ? '<a href="' + esc(url) + '" target="_blank" rel="noopener">' + esc(id) + '</a>' : '<b>' + esc(id) + '</b>') + tail + '</div>';
+    }
+    var rows = (a.linear || []).map(function (x) { return issueLink(x, VERB[x.action] || x.action); }).join('') +
+      (a.affectedClosed || []).map(function (x) { return issueLink(x, 'Flagged (completed)'); }).join('');
+    m.head.querySelector('h2').textContent = j.changeId + ' applied';
+    var body = el('<div class="pwe-body"></div>');
+    body.appendChild(el('<p class="pwe-hint">' + (a.docSections || []).length + ' doc section(s) updated' +
+      ((a.linear || []).length ? ' · ' + a.linear.length + ' Linear issue(s)' : '') +
+      ((a.affectedClosed || []).length ? ' · ' + a.affectedClosed.length + ' flagged' : '') + '. The docs are now live.</p>'));
+    if (rows) { body.appendChild(el('<div class="pwe-grp">Linear issues</div>')); body.appendChild(el('<div class="pwe-applied">' + rows + '</div>')); }
+    else { body.appendChild(el('<p class="pwe-hint">No tracker changes were applied.</p>')); }
+    if ((j.errors || []).length) body.appendChild(el('<div class="pwe-cl-err">⚠ ' + j.errors.map(esc).join('<br>⚠ ') + '</div>'));
+    // replace the assess body + foot with the summary
+    var oldBody = m.mod.querySelector('.pwe-body'); if (oldBody) oldBody.remove();
+    var oldFoot = m.mod.querySelector('.pwe-foot'); if (oldFoot) oldFoot.remove();
+    m.mod.appendChild(body);
+    var foot = el('<div class="pwe-foot"></div>');
+    var done = el('<button class="pwe-btn primary">Done — reload docs</button>');
+    function finish() { m.close(); if (editM) editM.close(); location.reload(); }
+    done.addEventListener('click', finish);
+    foot.appendChild(done); m.mod.appendChild(foot);
+    toast(j.changeId + ' applied');
   }
 
   // ════════════════════════════════════════════════════════════════════════════
