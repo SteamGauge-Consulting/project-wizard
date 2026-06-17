@@ -835,6 +835,10 @@ app.post('/api/projects/:id/deploy', (req, res) => {
       await run('sshpass', ['-e', 'ssh', ...sshArgs, target, 'mkdir -p ~/apps/' + name]);
       await run('sshpass', ['-e', 'rsync', '-az', '--delete', '-e', sshCmdStr,
         '--exclude', 'node_modules', '--exclude', '.git', '--exclude', '_static', '--exclude', 'deploy.sh',
+        // Preserve host-side runtime state across redeploys: the integration creds
+        // (set on the pod's Integrations tab) and the change log. enrich.json still
+        // syncs (the wizard regenerates it each build).
+        '--exclude', '.deploy/keys.json', '--exclude', '.deploy/changes.json',
         './', target + ':apps/' + name + '/']);
       await run('sshpass', ['-e', 'ssh', ...sshArgs, target, 'cd ~/apps/' + name + ' && docker compose up -d --build']);
       // Remember where it's live so the homepage card can deep-link to the docs.
