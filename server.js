@@ -458,11 +458,23 @@ app.post('/api/projects/:id/build-full', async (req, res) => {
     }
   }
 
-  // 2. Optional: create the Linear tracker (a brand-new project — never an
-  //    existing one). Runs BEFORE the render so the Plan page can mirror the
-  //    live tracker (milestone roll-up + per-phase issue overview + live status).
+  // 2. Optional Linear tracker. Runs BEFORE the render so the Plan page can mirror
+  //    the live tracker (milestone roll-up + per-phase issue overview + live
+  //    status). Two modes: pull an EXISTING project read-only (linearProjectId),
+  //    or create a brand-new one (teamId). Existing-pull never writes.
   const linearKey = (b.linearKey && String(b.linearKey).trim()) || '';
-  if (linearKey && b.teamId) {
+  const existingProjectId = (b.linearProjectId && String(b.linearProjectId).trim()) || '';
+  if (linearKey && existingProjectId) {
+    try {
+      lr = await linear.loadProjectStructure(linearKey, existingProjectId);  // read-only
+      out.linear = lr; out.linearMode = 'existing';
+      p.linear = lr;
+      p.linearUrl = lr.url;
+      p.linearProjectId = lr.projectId;
+    } catch (e) {
+      out.linearError = 'Linear (pull existing): ' + (e.message || 'failed');
+    }
+  } else if (linearKey && b.teamId) {
     try {
       lr = await linear.createProjectWithIssues(linearKey, { teamId: b.teamId, name: p.name, intake, startDate: intake.startDate, plan });
       out.linear = lr;
