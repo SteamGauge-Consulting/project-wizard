@@ -20,7 +20,7 @@ code{background:var(--code);border:1px solid var(--line);border-radius:5px;paddi
 .brand{font-weight:600;color:var(--accent);letter-spacing:.01em;}
 .brand-sub{color:var(--dim);font-size:13px;}
 
-main{max-width:1040px;margin:0 auto;padding:30px 22px 90px;}
+main{max-width:1240px;margin:0 auto;padding:30px 22px 90px;}
 .loading{color:var(--dim);padding:40px 0;}
 
 /* buttons */
@@ -157,7 +157,7 @@ table.edit-tbl{width:100%;border-collapse:collapse;}
 table.edit-tbl th{text-align:left;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim);padding:2px 6px;}
 table.edit-tbl td{padding:3px 6px;vertical-align:top;}
 table.edit-tbl td.rm{width:30px;}
-table.edit-tbl textarea{min-height:34px;font-size:13px;resize:vertical;}
+table.edit-tbl textarea{min-height:52px;font-size:13px;resize:vertical;}
 table.edit-tbl .x{background:none;border:1px solid var(--line);color:var(--dim);border-radius:7px;width:28px;height:30px;cursor:pointer;}
 table.edit-tbl .x:hover{color:var(--red);border-color:var(--red);}
 .chg-summary{color:var(--text-dim);font-size:14px;border-left:2px solid var(--accent);padding-left:12px;margin:6px 0 14px;}
@@ -183,7 +183,7 @@ table.edit-tbl .x:hover{color:var(--red);border-color:var(--red);}
 
 /* table cells: compact inputs + multi-line (ml) cells as small resizable textareas */
 table.rows input,table.rows select{font-size:13.5px;padding:7px 9px;}
-table.rows textarea.cell-ml{font-size:13.5px;padding:7px 9px;min-height:46px;line-height:1.45;resize:vertical;}
+table.rows textarea.cell-ml{font-size:13.5px;padding:7px 9px;min-height:70px;line-height:1.45;resize:vertical;}
 
 /* export sheet */
 .exp-modal{max-width:480px;max-height:88vh;overflow:auto;}

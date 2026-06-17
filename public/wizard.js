@@ -320,7 +320,7 @@
             c.sel.forEach(function (o) { html += '<option' + (row[c.k] === o ? ' selected' : '') + '>' + o + '</option>'; });
             html += '</select>';
           } else if (c.ml) {
-            html += '<textarea class="cell-ml" data-i="' + i + '" data-c="' + c.k + '" rows="2" placeholder="' + esc(c.ph) + '">' + esc(row[c.k]) + '</textarea>';
+            html += '<textarea class="cell-ml" data-i="' + i + '" data-c="' + c.k + '" rows="3" placeholder="' + esc(c.ph) + '">' + esc(row[c.k]) + '</textarea>';
           } else {
             html += '<input type="text" data-i="' + i + '" data-c="' + c.k + '" value="' + esc(row[c.k]) + '" placeholder="' + esc(c.ph) + '" />';
           }

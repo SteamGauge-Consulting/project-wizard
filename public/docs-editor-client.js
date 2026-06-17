@@ -75,7 +75,7 @@
     '.pwe-menu button:hover{background:rgba(255,255,255,.06)}',
     '.pwe-menu .pwe-sub{font-size:11px;color:#6A6A66;padding:7px 11px 3px;letter-spacing:.1em;text-transform:uppercase}',
     '.pwe-bg{position:fixed;inset:0;z-index:10060;background:rgba(8,8,10,.72);-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px);display:flex;align-items:flex-start;justify-content:center;padding:34px 16px;overflow:auto}',
-    '.pwe-modal{width:100%;max-width:1000px;background:#0E0E10;border:1px solid #2A2A2E;border-radius:14px;color:#E8E8E4;font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;box-shadow:0 30px 80px rgba(0,0,0,.6);overflow:hidden}',
+    '.pwe-modal{width:100%;max-width:1280px;background:#0E0E10;border:1px solid #2A2A2E;border-radius:14px;color:#E8E8E4;font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;box-shadow:0 30px 80px rgba(0,0,0,.6);overflow:hidden}',
     '.pwe-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 20px;border-bottom:1px solid #2A2A2E;position:sticky;top:0;background:#0E0E10;z-index:2}',
     '.pwe-head h2{margin:0;font-size:19px}',
     '.pwe-x{background:none;border:none;color:#9A9A95;font-size:22px;cursor:pointer;line-height:1;padding:2px 6px;border-radius:6px}',
@@ -90,7 +90,8 @@
     '.pwe-hint{color:#9A9A95;font-size:13px;margin:0 0 14px}',
     '.pwe-body label{display:block;font-size:12px;letter-spacing:.04em;text-transform:uppercase;color:#9A9A95;margin:12px 0 5px}',
     '.pwe-body input[type=text],.pwe-body input[type=date],.pwe-body textarea,.pwe-cell{width:100%;background:#161618;border:1px solid #2A2A2E;border-radius:8px;color:#E8E8E4;padding:9px 11px;font:inherit;font-size:14px}',
-    '.pwe-body textarea{resize:vertical;min-height:42px}',
+    '.pwe-body textarea{resize:vertical;min-height:66px;line-height:1.5}',
+    '.pwe-cell{min-height:66px}',
     '.pwe-body input:focus,.pwe-body textarea:focus,.pwe-body select:focus{outline:none;border-color:#97C459}',
     '.pwe-row2{display:flex;gap:12px}.pwe-row2>div{flex:1}',
     '.pwe-tbl{width:100%;border-collapse:collapse;margin-top:6px}',
@@ -273,7 +274,7 @@
         '<label>Target start date</label><input type="date" data-top="startDate" value="' + esc(buf.startDate || '') + '">';
       PRODUCT_FIELDS.forEach(function (f) {
         h += '<label>' + esc(f[1]) + '</label>' + (f[2] === 'area'
-          ? '<textarea rows="2" data-prod="' + f[0] + '">' + esc(buf.product[f[0]] || '') + '</textarea>'
+          ? '<textarea rows="3" data-prod="' + f[0] + '">' + esc(buf.product[f[0]] || '') + '</textarea>'
           : '<input type="text" data-prod="' + f[0] + '" value="' + esc(buf.product[f[0]] || '') + '">');
       });
       body.innerHTML = h;
@@ -296,7 +297,7 @@
         spec.cols.forEach(function (c) {
           h += '<td>';
           if (c.sel) { h += '<select data-i="' + i + '" data-c="' + c.k + '">' + c.sel.map(function (o) { return '<option' + (row[c.k] === o ? ' selected' : '') + '>' + esc(o) + '</option>'; }).join('') + '</select>'; }
-          else if (c.ml) { h += '<textarea class="pwe-cell" rows="2" data-i="' + i + '" data-c="' + c.k + '" placeholder="' + esc(c.ph) + '">' + esc(row[c.k] || '') + '</textarea>'; }
+          else if (c.ml) { h += '<textarea class="pwe-cell" rows="3" data-i="' + i + '" data-c="' + c.k + '" placeholder="' + esc(c.ph) + '">' + esc(row[c.k] || '') + '</textarea>'; }
           else { h += '<input class="pwe-cell" type="text" data-i="' + i + '" data-c="' + c.k + '" value="' + esc(row[c.k] || '') + '" placeholder="' + esc(c.ph) + '">'; }
           h += '</td>';
         });
