@@ -187,10 +187,10 @@
     if (!nav) return;
     var appLink = nav.querySelector('a[href="/"]'); // the "← App" link (margin-left:auto)
 
-    var clBtn = el('<button class="pwe-navbtn" title="Change history">Changelog</button>');
-    clBtn.addEventListener('click', openChangelog);
-
+    // The tools menu (☰) carries Edit / Changelog / Export, so there's no separate
+    // Changelog nav link. Right-justify the burger so it sits with "← App".
     var burger = el('<button class="pwe-navbtn pwe-burger" title="Edit & tools" aria-label="menu">☰</button>');
+    burger.style.marginLeft = 'auto';
     var menu = null;
     burger.addEventListener('click', function (e) {
       e.stopPropagation();
@@ -203,8 +203,8 @@
     });
     function closeMenu(ev) { if (menu && !menu.contains(ev.target)) { menu.remove(); menu = null; document.removeEventListener('click', closeMenu); } }
 
-    if (appLink) { nav.insertBefore(clBtn, appLink); nav.insertBefore(burger, appLink); }
-    else { nav.appendChild(clBtn); nav.appendChild(burger); }
+    if (appLink) { appLink.style.marginLeft = '0'; nav.insertBefore(burger, appLink); }
+    else { nav.appendChild(burger); }
   }
 
   function buildMenu() {
