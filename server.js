@@ -457,7 +457,11 @@ app.post('/api/projects/:id/build-full', async (req, res) => {
       let corpus = null;
       try { corpus = reverse.buildCorpus(storage.attachmentsDir(p.id)); } catch (e) {}
       enrich = await enrichLib.enrich(intake, apiKey, corpus && corpus.includedCount ? corpus : null);
-      plan = enrich.plan;
+      // The build plan gets its OWN call (full output budget) so the Linear issues
+      // come out granular, owner-split, and fully step-by-step.
+      try { plan = await enrichLib.enrichPlan(intake, apiKey, corpus && corpus.includedCount ? corpus : null); }
+      catch (e) { out.planError = 'plan enrichment failed: ' + (e.message || e); plan = null; }
+      if (plan && plan.length) enrich.plan = plan;   // cache alongside the docs enrichment
       out.enriched = true;
       out.counts = { requirements: (intake.requirements || []).length, decisions: (intake.decisions || []).length, milestones: (intake.milestones || []).length };
     } catch (e) {
