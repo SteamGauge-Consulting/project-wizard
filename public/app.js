@@ -393,6 +393,7 @@
         '<label>Team</label><select id="b-team" disabled><option value="">— enter a key, then Load teams —</option></select>' +
         '<div class="hint">Keys are used per-request and never stored on the server. The tracker is always a <b>new</b> project — it never writes into an existing one.</div>' +
         '<div style="display:flex;gap:8px;margin-top:14px;align-items:center"><button class="btn sm primary" id="b-go">' + ic('sparkles') + 'Build</button>' +
+        '<button class="btn sm" id="b-stop" style="display:none;color:#E0A848;border-color:#E0A848">■ Stop</button>' +
         '<span class="hint" id="b-status"></span></div>' +
         '<style>@keyframes pw-pulse{0%,100%{opacity:1}50%{opacity:.25}}</style>' +
         '<div id="b-prog" style="display:none;margin-top:12px;border-top:1px solid var(--line);padding-top:10px;font-size:12.5px;max-height:340px;overflow:auto"></div>' +
@@ -446,16 +447,20 @@
         if (t.fresh || t.cached || t.output) rows.push('<div style="margin-top:8px;border-top:1px solid var(--line);padding-top:6px;color:#6A6A66;font-size:11px">totals: <b style="color:#9A9A95">' + fmtK(t.fresh) + '</b> fresh · <b style="color:#9A9A95">' + fmtK(t.cached) + '</b> cached · <b style="color:#9A9A95">' + fmtK(t.output) + '</b> out  <span style="color:#4a4a52">(fresh billed full, cached ~10%)</span></div>');
         progEl.innerHTML = rows.join('');
       };
+      var stopBtn = bg.querySelector('#b-stop');
+      stopBtn.style.display = ''; stopBtn.disabled = false; stopBtn.textContent = '■ Stop';
+      stopBtn.onclick = function () { stopBtn.disabled = true; stopBtn.textContent = '■ Stopping…'; api('/api/projects/' + id + '/build-cancel', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).catch(function () {}); };
       var poll = setInterval(function () {
         fetch('/api/projects/' + id + '/build-progress').then(function (r) { return r.json(); }).then(function (pg) {
           if (pg && !pg.done) renderProgress(pg);
         }).catch(function () {});
       }, 1500);
-      var stopPoll = function () { clearInterval(poll); };
+      var stopPoll = function () { clearInterval(poll); stopBtn.style.display = 'none'; };
       api('/api/projects/' + id + '/build-full', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ apiKey: key, linearKey: linKey, teamId: teamId }) })
         .then(function (res) {
           stopPoll(); btn.disabled = false;
           var j = res.j || {};
+          if (j && j.cancelled) { status.style.color = ''; status.textContent = '■ Build cancelled — nothing was written.'; progEl.style.display = 'none'; return; }
           if (!res.ok) { status.style.color = 'var(--red)'; status.textContent = '✗ ' + (j.error || 'failed'); return; }
           var msg = 'Docs rebuilt in the wizard';
           if (j.linear) msg += ' · Linear: ' + j.linear.counts.issues + ' issues, ' + j.linear.counts.milestones + ' milestones';

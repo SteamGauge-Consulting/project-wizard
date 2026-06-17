@@ -437,7 +437,7 @@
           '<label>Team</label><select id="bp-team" disabled><option value="">— enter a key, then Load teams —</option></select>' +
           '<div class="hint">Creates a <b>brand-new</b> Linear project with milestones + issues — never writes into an existing project.</div>' +
 
-          '<div style="margin-top:16px"><button class="btn primary" id="bp-go">⚙ Build plan</button></div>' +
+          '<div style="margin-top:16px"><button class="btn primary" id="bp-go">⚙ Build plan</button> <button class="btn" id="bp-stop" style="display:none;color:#E0A848;border-color:#E0A848">■ Stop build</button></div>' +
           '<div id="bp-prog"></div>' +
         '</div></div>';
 
@@ -467,6 +467,7 @@
 
       bodyEl.querySelector('#bp-go').addEventListener('click', function () {
         var btn = this;
+        var stopBtn = bodyEl.querySelector('#bp-stop');
         var key = val('#bp-ai'), host = val('#bp-host'), linKey = val('#bp-lin'), teamId = sel.value;
         var deploy = { host: host, user: val('#bp-user') || 'docker', sshPort: val('#bp-sshport') || '22', password: val('#bp-pass'), name: val('#bp-name') || defName, port: val('#bp-port') || '3000', hostname: val('#bp-hostname') };
         try {
@@ -503,12 +504,15 @@
           var wantAI = key || cfg.aiServerKey;
           if (!wantAI) { step('2/3 · No Claude key — skipping AI build (clean tables only)…'); return { ok: true, j: { skipped: true } }; }
           step('2/3 · Building docs with AI' + (linKey && teamId ? ' + creating Linear issues' : '') + '… (agent explores your code — several minutes)');
+          stopBtn.style.display = ''; stopBtn.disabled = false; stopBtn.textContent = '■ Stop build';
+          stopBtn.onclick = function () { stopBtn.disabled = true; stopBtn.textContent = '■ Stopping…'; fetch('/api/projects/' + project.id + '/build-cancel', { method: 'POST' }).catch(function () {}); };
           bpPoll = setInterval(function () {
             fetch('/api/projects/' + project.id + '/build-progress').then(function (r) { return r.json(); }).then(function (pg) { if (pg && !pg.done) renderBP(pg); }).catch(function () {});
           }, 1500);
           return P('/api/projects/' + project.id + '/build-full', { apiKey: key, linearKey: linKey, teamId: teamId });
         }).then(function (b) {
-          clearBP();
+          clearBP(); stopBtn.style.display = 'none';
+          if (b && b.j && b.j.cancelled) { btn.disabled = false; step('■ Build cancelled — nothing was written to Linear or the docs.'); return Promise.reject({ cancelled: true }); }
           if (b && !b.ok) throw new Error(b.j.error || 'AI build failed');
           window.__bp_linear = b && b.j && b.j.linear;
           if (!host) { return { ok: true, j: { noDeploy: true } }; }
@@ -530,7 +534,7 @@
           }
           if (!d.ok || !d.j.ok) { prog.innerHTML = '<div class="bp-step err">✗ Deploy failed: ' + esc((d.j && d.j.error) || 'unknown') + '</div>' + linHtml + (d.j && d.j.output ? '<pre class="bp-out">' + esc(d.j.output.slice(-2000)) + '</pre>' : ''); return; }
           prog.innerHTML = '<div class="bp-step ok">✓ Live at <a href="' + esc(d.j.url) + '" target="_blank"><b>' + esc(d.j.url) + '</b></a></div>' + linHtml;
-        }).catch(function (e) { clearBP(); btn.disabled = false; step('✗ ' + e.message, 'err'); });
+        }).catch(function (e) { clearBP(); stopBtn.style.display = 'none'; btn.disabled = false; if (e && e.cancelled) return; step('✗ ' + (e.message || e), 'err'); });
       });
     }
 

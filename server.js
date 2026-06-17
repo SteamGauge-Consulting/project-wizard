@@ -436,6 +436,14 @@ const buildProgress = {};
 app.get('/api/projects/:id/build-progress', (req, res) => {
   res.json(buildProgress[req.params.id] || { steps: [], current: null, done: true });
 });
+// Cooperative cancel — the agentic build checks this set between steps and aborts.
+const cancelledBuilds = new Set();
+app.post('/api/projects/:id/build-cancel', (req, res) => {
+  cancelledBuilds.add(req.params.id);
+  const pr = buildProgress[req.params.id];
+  if (pr && !pr.done) { pr.current = 'Cancelling… (stopping after the current step)'; pr.agentRunning = false; }
+  res.json({ ok: true });
+});
 
 app.post('/api/projects/:id/build-full', async (req, res) => {
   const p = storage.getProject(req.params.id);
@@ -462,6 +470,8 @@ app.post('/api/projects/:id/build-full', async (req, res) => {
       prog.current = ev.label + ' ✓' + (ev.note ? ' — ' + ev.note : ''); prog.agentRunning = false; prog.liveTokens = null;
     } else { prog.phase = ev.label; prog.current = ev.label; prog.agentRunning = !!ev.agent; prog.liveTokens = null; }
   };
+  cancelledBuilds.delete(p.id);   // clear any stale cancel from a prior run
+  const checkCancel = () => cancelledBuilds.has(p.id);
 
   // 1. AI enrichment → produce the governance plan + rich doc content (Mermaid,
   //    Given/When/Then, ADR bodies). Optional: skipped when no key is available
@@ -482,26 +492,30 @@ app.post('/api/projects/:id/build-full', async (req, res) => {
       let index = null;
       try { index = reverse.buildFileIndex(storage.attachmentsDir(p.id)); } catch (e) {}
       try {
-        enrich = await enrichLib.enrich(intake, apiKey, index, onProgress);
+        enrich = await enrichLib.enrich(intake, apiKey, index, onProgress, checkCancel);
         // Plan: a continuous agentic session, one milestone at a time (reads + prior
         // issues accumulate), compacting only near the context limit, then a cohesion
         // review. pr.usage carries per-call token counts; pr.review what it added/removed.
         try {
-          const pr = await enrichLib.enrichPlan(intake, apiKey, index, onProgress);
+          const pr = await enrichLib.enrichPlan(intake, apiKey, index, onProgress, checkCancel);
           plan = pr.plan;
           out.planTokens = pr.usage;
           out.cohesion = pr.review;
         }
-        catch (e) { out.planError = 'plan enrichment failed: ' + (e.message || e); plan = null; }
+        catch (e) { if (e && e.cancelled) throw e; out.planError = 'plan enrichment failed: ' + (e.message || e); plan = null; }
       } finally { if (index && index.cleanup) { try { index.cleanup(); } catch (e) {} } }
       if (plan && plan.length) enrich.plan = plan;   // cache alongside the docs enrichment
       out.enriched = true;
       out.counts = { requirements: (intake.requirements || []).length, decisions: (intake.decisions || []).length, milestones: (intake.milestones || []).length };
     } catch (e) {
+      cancelledBuilds.delete(p.id);
+      if (e && (e.cancelled || checkCancel())) { prog.current = 'Cancelled — nothing was written'; prog.done = true; prog.cancelled = true; return res.json({ ok: false, cancelled: true }); }
       prog.done = true; prog.error = e.message || 'unknown error';
       return res.status(e.status || 500).json({ error: 'AI build failed: ' + (e.message || 'unknown error') });
     }
   }
+  // Aborted right after the AI, before any Linear/render write? Bail cleanly.
+  if (checkCancel()) { cancelledBuilds.delete(p.id); prog.current = 'Cancelled — nothing was written'; prog.done = true; prog.cancelled = true; return res.json({ ok: false, cancelled: true }); }
 
   // 2. Optional Linear tracker. Runs BEFORE the render so the Plan page can mirror
   //    the live tracker (milestone roll-up + per-phase issue overview + live
@@ -556,6 +570,7 @@ app.post('/api/projects/:id/build-full', async (req, res) => {
   p.baseline = intake;
   p.enrichedAt = new Date().toISOString();
   storage.saveProject(p);
+  cancelledBuilds.delete(p.id);
   prog.current = 'Done'; prog.done = true; prog.finishedAt = Date.now();
   res.json(out);
 });
