@@ -311,6 +311,7 @@
       body.innerHTML =
         '<h3>Integrations</h3><p class="pwe-hint">Keys &amp; settings this pod uses to build docs, assess changes, and sync the tracker. Stored on the pod and applied immediately — no redeploy. Leave a key blank to keep the current one; saved keys are never shown back here.</p>' +
         '<label>Anthropic (Claude) API key &nbsp;' + dot(ig.hasClaude) + '</label><input type="password" id="ig-claude" autocomplete="off" placeholder="' + ph(ig.hasClaude, 'sk-ant-…') + '">' +
+        '<label>Grok (xAI) API key &nbsp;<span style="color:#6A6A66;font-size:11px">cross-examiner</span> &nbsp;' + dot(ig.hasGrok) + '</label><input type="password" id="ig-grok" autocomplete="off" placeholder="' + ph(ig.hasGrok, 'xai-…') + '">' +
         '<label>Linear API key &nbsp;' + dot(ig.hasLinearKey) + '</label><input type="password" id="ig-linkey" autocomplete="off" placeholder="' + ph(ig.hasLinearKey, 'lin_api_…') + '">' +
         '<label>Linear project ID</label><input type="text" id="ig-linproj" value="' + esc(ig.linearProjectId || '') + '" placeholder="the project whose issues Assess/Apply sync">' +
         '<label>GitHub repo URL</label><input type="text" id="ig-ghrepo" value="' + esc(ig.githubRepoUrl || '') + '" placeholder="https://github.com/org/repo">' +
@@ -322,11 +323,15 @@
         '<div><label>SSH port</label><input type="text" id="ig-sshport" value="' + esc(ig.sshPort || '') + '" placeholder="22"></div></div>' +
         '<div class="pwe-row2"><div><label>Docs folder</label><input type="text" value="' + esc(ig.docsDir || 'docs') + '" disabled></div>' +
         '<div><label>This pod</label><input type="text" value="' + esc(location.host) + '" disabled></div></div>' +
-        '<div style="margin-top:16px;display:flex;gap:10px;align-items:center"><button class="pwe-btn primary" id="ig-save">Save integrations</button><span class="pwe-status" id="ig-st"></span></div>';
+        '<div style="margin-top:16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap"><button class="pwe-btn primary" id="ig-save">Save integrations</button>' +
+        '<a class="pwe-btn" href="/api/integrations/keys.json" download="keys.json" style="text-decoration:none">⤓ Download keys.json</a>' +
+        '<span class="pwe-status" id="ig-st"></span></div>' +
+        '<p class="pwe-hint" style="margin-top:8px">Download writes the real creds to a <code>keys.json</code> you can drop into a local clone (e.g. <code>.deploy/keys.json</code>) when running Claude Code off the host. It contains live secrets — keep it out of git.</p>';
       body.querySelector('#ig-save').addEventListener('click', function () {
         var st = body.querySelector('#ig-st'); var btn = this;
         var payload = {
           anthropicKey: body.querySelector('#ig-claude').value,
+          grokKey: body.querySelector('#ig-grok').value,
           linearKey: body.querySelector('#ig-linkey').value,
           linearProjectId: body.querySelector('#ig-linproj').value,
           githubRepoUrl: body.querySelector('#ig-ghrepo').value,
