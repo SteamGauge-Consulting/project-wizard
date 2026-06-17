@@ -1,9 +1,10 @@
 FROM node:20-alpine
 
-# zip → the .zip downloads; unzip → expand uploaded codebase .zips for analysis;
+# zip → the .zip downloads; unzip → expand uploaded codebase .zips (+ extract .docx);
+# poppler-utils → pdftotext, so uploaded PDF reference docs join the AI corpus;
 # openssh-client + rsync + sshpass → "Deploy now" pushes a generated package to a
 # Docker host over SSH from inside the container.
-RUN apk add --no-cache zip unzip openssh-client rsync sshpass
+RUN apk add --no-cache zip unzip poppler-utils openssh-client rsync sshpass
 
 WORKDIR /app
 COPY package.json ./

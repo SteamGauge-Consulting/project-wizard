@@ -429,6 +429,14 @@ app.post('/api/linear/teams', async (req, res) => {
 // Enrich the generated docs with AI (Mermaid diagrams, Given/When/Then, ADR
 // bodies) and — if a Linear key + team are supplied — create a brand-new Linear
 // project with milestones + issues from the intake.
+// In-memory build progress, keyed by project id — the long AI build (docs + one
+// call per milestone + cohesion review) reports each step here so the UI can poll
+// it. Cleared/overwritten on each new build.
+const buildProgress = {};
+app.get('/api/projects/:id/build-progress', (req, res) => {
+  res.json(buildProgress[req.params.id] || { steps: [], current: null, done: true });
+});
+
 app.post('/api/projects/:id/build-full', async (req, res) => {
   const p = storage.getProject(req.params.id);
   if (!p) return res.status(404).json({ error: 'not found' });
@@ -440,6 +448,10 @@ app.post('/api/projects/:id/build-full', async (req, res) => {
   const docsDir = (p.answers && p.answers.integrations && p.answers.integrations.docsDir) || 'docs';
   const out = { ok: true };
   let plan = null, enrich = null, lr = null;
+
+  // Progress sink — each AI step calls this; the UI polls /build-progress.
+  const prog = buildProgress[p.id] = { steps: [], current: 'Starting…', done: false, startedAt: Date.now() };
+  const onProgress = (msg) => { prog.current = msg; prog.steps.push({ msg: msg, at: Date.now() }); };
 
   // 1. AI enrichment → produce the governance plan + rich doc content (Mermaid,
   //    Given/When/Then, ADR bodies). Optional: skipped when no key is available
@@ -456,14 +468,17 @@ app.post('/api/projects/:id/build-full', async (req, res) => {
     try {
       let corpus = null;
       try { corpus = reverse.buildCorpus(storage.attachmentsDir(p.id)); } catch (e) {}
-      enrich = await enrichLib.enrich(intake, apiKey, corpus && corpus.includedCount ? corpus : null);
-      // The build plan gets its OWN call PER MILESTONE (full output budget each) so
-      // the Linear issues come out granular, owner-split, fully step-by-step — and
-      // never cut to fit a shared budget. pr.usage carries per-call token counts.
+      const fullCorpus = corpus && corpus.includedCount ? corpus : null;
+      enrich = await enrichLib.enrich(intake, apiKey, fullCorpus, onProgress);
+      // The build plan gets its OWN call PER MILESTONE (full output budget each, with
+      // the full intake + codebase + governance library as input), then a final
+      // cohesion review against requirements + governance. pr.usage carries per-call
+      // token counts; pr.review carries what the cohesion pass added/removed.
       try {
-        const pr = await enrichLib.enrichPlan(intake, apiKey, corpus && corpus.includedCount ? corpus : null);
+        const pr = await enrichLib.enrichPlan(intake, apiKey, fullCorpus, onProgress);
         plan = pr.plan;
         out.planTokens = pr.usage;
+        out.cohesion = pr.review;
         const cut = (pr.usage || []).filter((u) => u.truncated);
         if (cut.length) out.planTruncated = cut.map((u) => u.pass);   // any pass that hit the cap
       }
@@ -472,6 +487,7 @@ app.post('/api/projects/:id/build-full', async (req, res) => {
       out.enriched = true;
       out.counts = { requirements: (intake.requirements || []).length, decisions: (intake.decisions || []).length, milestones: (intake.milestones || []).length };
     } catch (e) {
+      prog.done = true; prog.error = e.message || 'unknown error';
       return res.status(e.status || 500).json({ error: 'AI build failed: ' + (e.message || 'unknown error') });
     }
   }
@@ -484,6 +500,7 @@ app.post('/api/projects/:id/build-full', async (req, res) => {
   const existingProjectId = (b.linearProjectId && String(b.linearProjectId).trim()) || '';
   if (linearKey && existingProjectId) {
     try {
+      onProgress('Linking existing Linear tracker');
       lr = await linear.loadProjectStructure(linearKey, existingProjectId);  // read-only
       out.linear = lr; out.linearMode = 'existing';
       p.linear = lr;
@@ -494,6 +511,7 @@ app.post('/api/projects/:id/build-full', async (req, res) => {
     }
   } else if (linearKey && b.teamId) {
     try {
+      onProgress('Creating Linear project + issues');
       lr = await linear.createProjectWithIssues(linearKey, { teamId: b.teamId, name: p.name, intake, startDate: intake.startDate, plan });
       out.linear = lr;
       p.linear = lr;                  // persisted so apply-changes can re-render the Plan overview
@@ -508,6 +526,7 @@ app.post('/api/projects/:id/build-full', async (req, res) => {
   //    and/or the live Linear tracker). Skipped only when neither ran.
   if (enrich || lr) {
     try {
+      onProgress('Rendering docs');
       renderIntake.render(dir, intake, { docsDir, enrich, linear: lr, wizardEditUrl: wizardEditUrl(req, p.id) });
       writeAux(p, dir);
     } catch (e) {
@@ -526,6 +545,7 @@ app.post('/api/projects/:id/build-full', async (req, res) => {
   p.baseline = intake;
   p.enrichedAt = new Date().toISOString();
   storage.saveProject(p);
+  prog.current = 'Done'; prog.done = true; prog.finishedAt = Date.now();
   res.json(out);
 });
 

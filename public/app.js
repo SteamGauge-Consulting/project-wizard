@@ -420,19 +420,28 @@
       var linKey = bg.querySelector('#b-lin').value.trim(), teamId = sel.value;
       try { if (bg.querySelector('#b-remember').checked && key) localStorage.setItem(KEY_LS, key); else localStorage.removeItem(KEY_LS); } catch (e) {}
       btn.disabled = true;
-      status.textContent = 'building with AI… (can take a minute)' + (linKey && teamId ? ' then creating Linear issues' : '');
       status.style.color = '';
+      status.textContent = 'starting… (this build is thorough — it can take several minutes)';
+      // The build is long (one AI pass per milestone + a final cohesion review), so
+      // poll the server's progress and show exactly which step it's on.
+      var poll = setInterval(function () {
+        fetch('/api/projects/' + id + '/build-progress').then(function (r) { return r.json(); }).then(function (pg) {
+          if (pg && pg.current && !pg.done) status.textContent = '⏳ ' + pg.current + (pg.steps && pg.steps.length ? '  · step ' + pg.steps.length : '');
+        }).catch(function () {});
+      }, 2000);
+      var stopPoll = function () { clearInterval(poll); };
       api('/api/projects/' + id + '/build-full', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ apiKey: key, linearKey: linKey, teamId: teamId }) })
         .then(function (res) {
-          btn.disabled = false;
+          stopPoll(); btn.disabled = false;
           var j = res.j || {};
           if (!res.ok) { status.style.color = 'var(--red)'; status.textContent = '✗ ' + (j.error || 'failed'); return; }
           var msg = 'Docs rebuilt in the wizard';
           if (j.linear) msg += ' · Linear: ' + j.linear.counts.issues + ' issues, ' + j.linear.counts.milestones + ' milestones';
           else if (j.linearError) msg += ' · ' + j.linearError;
+          if (j.cohesion) msg += ' · cohesion +' + j.cohesion.added + '/−' + j.cohesion.removed;
           toast(msg + ' — now Export / Deploy to push it live');
           bg.remove(); docs(id);
-        }).catch(function (e) { btn.disabled = false; status.style.color = 'var(--red)'; status.textContent = '✗ ' + e.message; });
+        }).catch(function (e) { stopPoll(); btn.disabled = false; status.style.color = 'var(--red)'; status.textContent = '✗ ' + e.message; });
     });
   }
 
