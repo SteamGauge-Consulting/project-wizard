@@ -445,7 +445,14 @@ app.post('/api/projects/:id/build-full', async (req, res) => {
   //    Given/When/Then, ADR bodies). Optional: skipped when no key is available
   //    (docs stay as clean tables), so the Linear step below can still run.
   const apiKey = (b.apiKey && String(b.apiKey).trim()) || '';
-  if (apiKey || enrichLib.aiEnabled()) {
+  // Fast path: re-render from the CACHED enrichment (no AI call) — for template /
+  // design changes that must NOT alter the AI-generated content the user accepted.
+  const cachedEnrichPath = path.join(dir, '.deploy', 'enrich.json');
+  if (b.reuseEnrich && fs.existsSync(cachedEnrichPath)) {
+    try { enrich = JSON.parse(fs.readFileSync(cachedEnrichPath, 'utf-8')); plan = enrich.plan || null; out.reusedEnrich = true; out.enriched = true; }
+    catch (e) { enrich = null; }
+  }
+  if (!enrich && (apiKey || enrichLib.aiEnabled())) {
     try {
       let corpus = null;
       try { corpus = reverse.buildCorpus(storage.attachmentsDir(p.id)); } catch (e) {}
