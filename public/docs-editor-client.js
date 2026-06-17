@@ -209,13 +209,13 @@
 
   function buildMenu() {
     var m = el('<div class="pwe-menu"></div>');
-    var edit = el('<button>✎ &nbsp;Edit the plan</button>');
+    var edit = el('<button>Edit the plan</button>');
     edit.addEventListener('click', function () { m.remove(); openEdit(); });
     m.appendChild(edit);
-    var log = el('<button>🕘 &nbsp;Changelog</button>');
+    var log = el('<button>Changelog</button>');
     log.addEventListener('click', function () { m.remove(); openChangelog(); });
     m.appendChild(log);
-    var code = el('<button>❮❯ &nbsp;Export / code</button>');
+    var code = el('<button>Export / code</button>');
     code.addEventListener('click', function () { m.remove(); openBrowse(); });
     m.appendChild(code);
     return m;
