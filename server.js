@@ -804,7 +804,10 @@ app.post('/api/projects/:id/deploy', (req, res) => {
   if (!fs.existsSync(dir)) return res.status(404).json({ error: 'nothing generated' });
   const b = req.body || {};
   if (!b.host) return res.status(400).json({ ok: false, error: 'host is required' });
-  if (!b.password) return res.status(400).json({ ok: false, error: 'SSH password is required — the wizard pushes from inside the container, so it needs the password (key auth isn’t wired here). You can still use “Download bundle” and run deploy.sh with your own key.' });
+  // Two auth modes: a password (sshpass) OR SSH key. No password → key auth, which
+  // uses the host's ~/.ssh mounted into this container (the key must be authorized
+  // on the target). On a key-only server, leave the password blank.
+  const usePassword = !!(b.password && String(b.password).trim());
 
   const wizardUrl = (req.protocol || 'http') + '://' + req.get('host');
   const params = { name: b.name || p.name, host: b.host, sshUser: b.user, sshPort: b.sshPort, port: b.port, hostname: b.hostname, linearKey: b.linearKey, anthropicKey: b.apiKey, linearProjectId: b.linearProjectId || p.linearProjectId, wizardUrl: wizardUrl, wizardProjectId: p.id };
@@ -814,9 +817,9 @@ app.post('/api/projects/:id/deploy', (req, res) => {
   const sshPort = String(b.sshPort || '22').trim();
   const target = user + '@' + host;
   const meta = deployBundle.files(params)._meta;
-  const sshArgs = ['-o', 'StrictHostKeyChecking=accept-new', '-o', 'ConnectTimeout=15', '-p', sshPort];
-  const sshCmdStr = 'ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15 -p ' + sshPort;
-  const env = Object.assign({}, process.env, { SSHPASS: String(b.password) });
+  const sshArgs = ['-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null', '-o', 'ConnectTimeout=15', '-p', sshPort];
+  const sshCmdStr = 'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=15 -p ' + sshPort;
+  const env = usePassword ? Object.assign({}, process.env, { SSHPASS: String(b.password) }) : process.env;
 
   let stage;
   try { stage = stageDeploy(dir, params); }
@@ -830,18 +833,21 @@ app.post('/api/projects/:id/deploy', (req, res) => {
     ps.on('error', reject);
     ps.on('close', (code) => (code === 0 ? resolve() : reject(new Error(cmd + ' exited ' + code))));
   });
+  // Run ssh/rsync with a password (sshpass) or, in key mode, directly (uses the
+  // mounted ~/.ssh key).
+  const runRemote = (program, args) => usePassword ? run('sshpass', ['-e', program, ...args]) : run(program, args);
 
   (async () => {
     try {
-      await run('sshpass', ['-e', 'ssh', ...sshArgs, target, 'mkdir -p ~/apps/' + name]);
+      await runRemote('ssh', [...sshArgs, target, 'mkdir -p ~/apps/' + name]);
       // Is this an UPDATE of an existing pod (vs a first deploy)? If so, preserve
       // its content — the intake it's been edited to AND the AI enrichment it
       // accepted — not just keys + changelog, then re-render in place so the new
       // templates apply to ITS content rather than the wizard's.
       let existing = false;
-      try { await run('sshpass', ['-e', 'ssh', ...sshArgs, target, 'test -f ~/apps/' + name + '/PLAN-INTAKE.json']); existing = true; } catch (e) {}
+      try { await runRemote('ssh', [...sshArgs, target, 'test -f ~/apps/' + name + '/PLAN-INTAKE.json']); existing = true; } catch (e) {}
       const preserve = existing ? ['--exclude', 'PLAN-INTAKE.json', '--exclude', '.deploy/enrich.json'] : [];
-      await run('sshpass', ['-e', 'rsync', '-az', '--delete', '-e', sshCmdStr,
+      await runRemote('rsync', ['-az', '--delete', '-e', sshCmdStr,
         '--exclude', 'node_modules', '--exclude', '.git', '--exclude', '_static', '--exclude', 'deploy.sh',
         // Always preserve host-side runtime state across redeploys: the integration
         // creds (Integrations tab) and the change log. On an update, also preserve
@@ -852,7 +858,7 @@ app.post('/api/projects/:id/deploy', (req, res) => {
       // Run the container as the deploying (SSH) user, not root, so files it writes
       // into the bind-mounted app dir stay owned by that user — otherwise the next
       // deploy's rsync can't overwrite them (Permission denied / rsync exit 23).
-      await run('sshpass', ['-e', 'ssh', ...sshArgs, target, 'cd ~/apps/' + name + ' && PUID=$(id -u) PGID=$(id -g) docker compose up -d --build']);
+      await runRemote('ssh', [...sshArgs, target, 'cd ~/apps/' + name + ' && PUID=$(id -u) PGID=$(id -g) docker compose up -d --build']);
       // On an update, re-render the pod's docs from ITS preserved intake with the
       // new engine (the rsync shipped wizard-content docs; this replaces them with
       // the pod's own content under the new templates). Pod needs a moment to boot.

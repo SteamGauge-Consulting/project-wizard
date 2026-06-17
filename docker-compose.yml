@@ -15,6 +15,10 @@ services:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
     volumes:
       - project-wizard-data:/app/data   # projects + generated trees persist here
+      # Key-based "Deploy now" (for key-only SSH servers): mounts the host user's
+      # SSH dir so the container can authenticate with their key when no password
+      # is given. Read-only; harmless when deploying with a password instead.
+      - ${HOME:-/root}/.ssh:/root/.ssh:ro
 
 volumes:
   project-wizard-data:
