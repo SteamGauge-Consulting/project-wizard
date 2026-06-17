@@ -73,11 +73,12 @@ main{max-width:1240px;margin:0 auto;padding:30px 22px 90px;}
 .wiz-top{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px;}
 .wiz-top .title{font-size:22px;font-weight:600;}
 .wiz-top .save{color:var(--dim);font-size:12px;}
-.steps{display:flex;flex-wrap:wrap;gap:6px;margin:18px 0 22px;}
-.steps button{background:var(--panel);border:1px solid var(--line);color:var(--muted);border-radius:999px;
-  padding:6px 13px;font-size:12.5px;cursor:pointer;}
-.steps button.on{color:#0E0E10;background:var(--accent);border-color:var(--accent);font-weight:600;}
-.steps button.done{color:var(--accent);border-color:var(--accent);}
+.steps{display:flex;flex-wrap:wrap;gap:2px;margin:18px 0 22px;border-bottom:1px solid var(--line);}
+.steps button{background:none;border:none;border-bottom:2px solid transparent;color:var(--muted);
+  padding:9px 15px;font-size:13.5px;cursor:pointer;border-radius:0;margin-bottom:-1px;}
+.steps button:hover{color:var(--text);}
+.steps button.on{color:var(--accent);border-bottom-color:var(--accent);font-weight:600;}
+.steps button.done{color:var(--text-dim);}
 .step{display:none;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px;}
 .step.on{display:block;}
 .step h2{font-size:20px;margin:0 0 4px;}
