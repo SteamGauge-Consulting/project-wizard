@@ -185,12 +185,23 @@
   function mountNav() {
     var nav = document.querySelector('nav.docs-nav');
     if (!nav) return;
-    var appLink = nav.querySelector('a[href="/"]'); // the "← App" link (margin-left:auto)
+    var appLink = nav.querySelector('a.nav-app') || nav.querySelector('a[href="/"]'); // the "← App" link
+
+    // "← App" returns to the project-wizard homepage (project tiles), derived from
+    // THIS pod's hostname — the wizard is at wizard.<same-base-domain> as the pod.
+    if (appLink) {
+      try {
+        var parts = location.hostname.split('.');
+        if (parts.length > 1 && parts[0] !== 'wizard') {
+          parts[0] = 'wizard';
+          appLink.href = location.protocol + '//' + parts.join('.') + (location.port ? ':' + location.port : '') + '/';
+        }
+      } catch (e) {}
+    }
 
     // The tools menu (☰) carries Edit / Changelog / Export, so there's no separate
-    // Changelog nav link. Right-justify the burger so it sits with "← App".
+    // Changelog nav link. It sits at the right edge, just after "← App".
     var burger = el('<button class="pwe-navbtn pwe-burger" title="Edit & tools" aria-label="menu">☰</button>');
-    burger.style.marginLeft = 'auto';
     var menu = null;
     burger.addEventListener('click', function (e) {
       e.stopPropagation();
@@ -203,7 +214,7 @@
     });
     function closeMenu(ev) { if (menu && !menu.contains(ev.target)) { menu.remove(); menu = null; document.removeEventListener('click', closeMenu); } }
 
-    if (appLink) { appLink.style.marginLeft = '0'; nav.insertBefore(burger, appLink); }
+    if (appLink) { nav.insertBefore(burger, appLink.nextSibling); }
     else { nav.appendChild(burger); }
   }
 
