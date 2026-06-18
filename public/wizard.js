@@ -409,9 +409,9 @@
         ? '<div class="warn"><b>Heads up:</b> these requirements have a thin or generic test — the agent will have to ask you for detail: ' + weak.map(esc).join('; ') + '.</div>'
         : '';
 
-      var LS_KEY = 'pw_anthropic_key', LS_DEPLOY = 'pw_deploy';
-      var savedKey = '', dep = {};
-      try { savedKey = localStorage.getItem(LS_KEY) || ''; dep = JSON.parse(localStorage.getItem(LS_DEPLOY) || '{}'); } catch (e) {}
+      var LS_KEY = 'pw_anthropic_key', LS_DEPLOY = 'pw_deploy', LS_SEC = 'pw_deploy_secrets';
+      var savedKey = '', dep = {}, sec = {};
+      try { savedKey = localStorage.getItem(LS_KEY) || ''; dep = JSON.parse(localStorage.getItem(LS_DEPLOY) || '{}'); sec = JSON.parse(localStorage.getItem(LS_SEC) || '{}'); } catch (e) {}
       var defName = (p.name || project.name || 'project').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 
       bodyEl.innerHTML =
@@ -423,18 +423,18 @@
         '</ul>' + warnHtml +
         '<div class="dform">' +
           '<label>Claude API key</label><input type="password" id="bp-ai" placeholder="sk-ant-… (drives the AI build)" value="' + esc(savedKey) + '" autocomplete="off" />' +
-          '<label class="chk"><input type="checkbox" id="bp-remember"' + (savedKey ? ' checked' : '') + ' /> Remember on this device</label>' +
+          '<label class="chk"><input type="checkbox" id="bp-remember"' + ((savedKey || sec.sshPass || sec.linearKey) ? ' checked' : '') + ' /> Remember keys + SSH/Linear creds on this device (same server each time)</label>' +
 
           '<div class="bp-sec">Deploy target (Docker host over SSH)</div>' +
           '<label>SSH host / IP</label><input type="text" id="bp-host" placeholder="10.10.0.208" value="' + esc(dep.host || '') + '" />' +
           '<div class="row2"><div><label>SSH user</label><input type="text" id="bp-user" value="' + esc(dep.user || 'docker') + '" /></div><div><label>SSH port</label><input type="text" id="bp-sshport" value="' + esc(dep.sshPort || '22') + '" /></div></div>' +
-          '<label>SSH password</label><input type="password" id="bp-pass" placeholder="needed so the wizard can push over SSH" autocomplete="off" />' +
+          '<label>SSH password</label><input type="password" id="bp-pass" placeholder="needed so the wizard can push over SSH" value="' + esc(sec.sshPass || '') + '" autocomplete="off" />' +
           '<div class="row2"><div><label>App name</label><input type="text" id="bp-name" value="' + esc(dep.name || defName) + '" /></div><div><label>Container port</label><input type="text" id="bp-port" value="' + esc(dep.port || '3000') + '" /></div></div>' +
           '<label>Hostname for Traefik <span style="text-transform:none;letter-spacing:0">(optional)</span></label><input type="text" id="bp-hostname" placeholder="' + esc(defName) + '.10.10.0.208.nip.io" value="' + esc(dep.hostname || '') + '" />' +
           '<div class="hint">Leave the host blank to just build the docs in the wizard (no deploy). Keys &amp; password are used per-request, never stored on the server.</div>' +
 
           '<div class="bp-sec">Linear tracker <span style="text-transform:none;letter-spacing:0">(optional)</span></div>' +
-          '<div class="row2" style="align-items:flex-end"><div style="flex:2"><label>Linear API key</label><input type="password" id="bp-lin" placeholder="lin_api_… (write access)" autocomplete="off" /></div><div style="flex:1"><button class="btn sm" id="bp-teams">Load teams</button></div></div>' +
+          '<div class="row2" style="align-items:flex-end"><div style="flex:2"><label>Linear API key</label><input type="password" id="bp-lin" placeholder="lin_api_… (write access)" value="' + esc(sec.linearKey || '') + '" autocomplete="off" /></div><div style="flex:1"><button class="btn sm" id="bp-teams">Load teams</button></div></div>' +
           '<label>Team</label><select id="bp-team" disabled><option value="">— enter a key, then Load teams —</option></select>' +
           '<div class="hint">Creates a <b>brand-new</b> Linear project with milestones + issues — never writes into an existing project.</div>' +
 
@@ -454,7 +454,7 @@
       function val(id) { var e = bodyEl.querySelector(id); return e ? e.value.trim() : ''; }
       function step(msg, cls) { prog.innerHTML = '<div class="bp-step ' + (cls || '') + '">' + msg + '</div>'; }
 
-      bodyEl.querySelector('#bp-teams').addEventListener('click', function () {
+      function loadTeams(preselect) {
         var k = val('#bp-lin'); if (!k) { step('Enter a Linear key first', 'err'); return; }
         step('Loading teams…');
         fetch('/api/linear/teams', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ key: k }) })
@@ -463,8 +463,12 @@
             if (!res.ok) { step('✗ ' + (res.j.error || 'failed'), 'err'); return; }
             prog.innerHTML = ''; sel.disabled = false;
             sel.innerHTML = '<option value="">— pick a team —</option>' + res.j.teams.map(function (t) { return '<option value="' + esc(t.id) + '">' + esc(t.name) + ' (' + esc(t.key) + ')</option>'; }).join('');
+            if (preselect) sel.value = preselect;
           }).catch(function (e) { step('✗ ' + e.message, 'err'); });
-      });
+      }
+      bodyEl.querySelector('#bp-teams').addEventListener('click', function () { loadTeams(); });
+      // Same server each time → if a Linear key was remembered, auto-load teams + reselect.
+      if (sec.linearKey) loadTeams(sec.teamId);
 
       bodyEl.querySelector('#bp-go').addEventListener('click', function () {
         var btn = this;
@@ -472,8 +476,12 @@
         var key = val('#bp-ai'), host = val('#bp-host'), linKey = val('#bp-lin'), teamId = sel.value;
         var deploy = { host: host, user: val('#bp-user') || 'docker', sshPort: val('#bp-sshport') || '22', password: val('#bp-pass'), name: val('#bp-name') || defName, port: val('#bp-port') || '3000', hostname: val('#bp-hostname') };
         try {
-          if (bodyEl.querySelector('#bp-remember').checked && key) localStorage.setItem(LS_KEY, key); else localStorage.removeItem(LS_KEY);
+          var remember = bodyEl.querySelector('#bp-remember').checked;
+          if (remember && key) localStorage.setItem(LS_KEY, key); else localStorage.removeItem(LS_KEY);
           localStorage.setItem(LS_DEPLOY, JSON.stringify({ host: host, user: deploy.user, sshPort: deploy.sshPort, name: deploy.name, port: deploy.port, hostname: deploy.hostname }));
+          // Same server every deploy — also keep the SSH password, Linear key + team so
+          // they're pre-filled next time (only when "Remember on this device" is checked).
+          if (remember) localStorage.setItem(LS_SEC, JSON.stringify({ sshPass: deploy.password, linearKey: linKey, teamId: teamId })); else localStorage.removeItem(LS_SEC);
         } catch (e) {}
         if (host && !deploy.password) { step('Enter the SSH password to deploy (or clear the host to just build).', 'err'); return; }
         btn.disabled = true; doSave();
