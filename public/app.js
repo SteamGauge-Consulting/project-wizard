@@ -480,7 +480,7 @@
     risks:        { title: 'Risks',        cols: [['risk', 'Risk / constraint'], ['mitigation', 'Mitigation']] },
     scalability:  { title: 'Non-functional & scale', cols: [['area', 'Area'], ['target', 'Target'], ['adr', 'Decision']] },
   };
-  var EDIT_PRODUCT = [['oneliner', 'One-liner'], ['problem', 'Problem'], ['users', 'Users'], ['differentiator', 'Differentiator'], ['experience', 'Experience'], ['success', 'Success'], ['notBuilding', 'Not building (one per line)']];
+  var EDIT_PRODUCT = [['oneliner', 'One-liner'], ['goal', 'Goal of this project (master objective)'], ['problem', 'Problem'], ['users', 'Users'], ['differentiator', 'Differentiator'], ['experience', 'Experience'], ['success', 'Success'], ['notBuilding', 'Not building (one per line)']];
 
   function bufToIntake(buf) {
     return {

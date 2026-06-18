@@ -68,6 +68,7 @@
       ['product.name', 'App name', 'Acme', 'text'],
       ['product.domain', 'Production domain', 'acme.app', 'text'],
       ['product.oneliner', 'One-liner — what is it, in your own words?', 'A calm, ordered to-do list for ADHD households', 'text'],
+      ['product.goal', 'Goal of this project — the master objective (WHY it exists + the outcome it must achieve)', 'The north star that every requirement serves and the agent keeps the plan focused on. e.g. “Move our sales team off the Manus prototype onto a self-hosted CRM we own — running on-prem with our real pipeline data — so we stop paying per-seat and can customize freely.”', 'area'],
       ['product.problem', 'The problem — who hurts today, how, and why their current options fail them', 'Be specific about the pain and why the obvious alternatives don’t solve it.', 'area'],
       ['product.users', 'Who exactly is it for — and what do they need that others don’t?', 'One line per user type: who they are and the unmet need.', 'area'],
       ['product.differentiator', 'What makes it unmistakably better than how they solve this today?', 'The one thing that, if you nail it, makes people switch — the heart of the product.', 'area'],
