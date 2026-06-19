@@ -12,8 +12,8 @@
       { k: 'test', th: 'How you’d test it (plain English)', ph: 'A new visitor finishes checkout in under 3 minutes', w: '60%', ml: true }] },
     decisions: { label: 'decision', cols: [
       { k: 'concern', th: 'Concern', ph: 'Database', w: '20%' },
-      { k: 'choice', th: 'Decision', ph: 'Managed Postgres (Neon)', w: '28%' },
-      { k: 'why', th: 'Why (the trade-off you accept)', ph: 'Zero ops; vendor lock-in acceptable', w: '52%', ml: true }] },
+      { k: 'choice', th: 'Decision', ph: 'PostgreSQL 16 + pgvector (Docker)', w: '28%' },
+      { k: 'why', th: 'Why (the trade-off you accept)', ph: 'One engine for relational + vector; self-hosted in a container', w: '52%', ml: true }] },
     milestones: { label: 'milestone', cols: [
       { k: 'name', th: 'Milestone', ph: 'M1 · Foundation', w: '24%' },
       { k: 'done', th: 'Done means…', ph: 'App deployed, reachable over HTTPS', w: '54%', ml: true },
@@ -35,9 +35,9 @@
       { title: 'Users can export their data', priority: 'Should', test: 'A user exports all their records as CSV and the downloaded file contains every row with no truncation' },
     ],
     decisions: [
-      { concern: 'Database', choice: 'Managed Postgres (Neon)', why: 'Zero ops and preview branching; vendor lock-in acceptable at this scale' },
-      { concern: 'Auth', choice: 'Clerk (hosted)', why: 'Offload security-critical auth; faster than rolling our own, cost is acceptable' },
-      { concern: 'Hosting', choice: 'Fly.io containers', why: 'Simple multi-region + scale-to-zero; revisit if egress cost spikes' },
+      { concern: 'Database', choice: 'PostgreSQL 16 + pgvector (self-hosted, Docker)', why: 'Relational integrity + native vector search (pgvector) in one engine; runs as a container beside the app — full data ownership, no managed-service lock-in, portable to any host' },
+      { concern: 'Auth', choice: 'OIDC SSO (Entra ID / Microsoft 365) + app-minted JWT in httpOnly cookie', why: 'Reuse the org identity provider for true SSO/MFA; app mints its own short-lived session cookie — no third-party hosted-auth vendor or per-seat cost' },
+      { concern: 'Hosting', choice: 'Docker Compose behind Traefik on the LAN (images built on host)', why: 'Self-hosted, one-command deploy on owned infrastructure; no managed-runtime lock-in or egress cost — revisit if uptime/scale exceeds a single host' },
     ],
     milestones: [
       { name: 'M1 · Foundation', done: 'App containerized and deployed; a stranger can reach it over HTTPS', target: 'Week 2' },
