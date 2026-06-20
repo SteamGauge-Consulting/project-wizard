@@ -40,6 +40,26 @@ git fetch origin main          # Username = your GitHub login · Password = the 
 docker compose up -d --build
 ```
 
+### Set your house defaults (org standard stack)
+
+On first start the server seeds **`house-defaults.json`** into the persistent
+data volume (`/app/data/house-defaults.json`) from the committed
+`house-defaults.example.json`. This is your org's default stack — every new
+project pre-seeds its architecture **decisions** from it (database, auth,
+hosting, secrets, …), and the wizard's Decisions step + "Load examples" read it.
+Each value stays editable per project.
+
+Edit it to match your standard; it then sticks, because it lives in the data
+volume (so `scripts/update.sh`'s hard-reset never touches it):
+
+```bash
+docker compose exec project-wizard sh -lc 'vi /app/data/house-defaults.json'
+# set a choice to "" to ship no opinion for that concern
+```
+
+Nothing stack-specific is baked into the code or the AI prompts — change the
+default in one place here.
+
 ## Updating an existing install
 
 ```bash

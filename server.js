@@ -29,6 +29,32 @@ const app = express();
 const PORT = process.env.PORT || 4500;
 const KIT = path.join(__dirname, 'lib', 'docs-kit.js');
 
+// ── House defaults ───────────────────────────────────────────────────────────
+// The org's standard stack lives in house-defaults.json inside the persistent
+// data volume — NOT in the repo tree — so `scripts/update.sh` (which hard-resets
+// to origin) never overwrites a customized config. On first run we seed it from
+// the committed house-defaults.example.json. New projects pre-seed their
+// architecture `decisions` from it, and the wizard UI reads it via /api/config.
+const DATA_ROOT = path.dirname(process.env.DATA_DIR || path.join(__dirname, 'data', 'projects'));
+const HOUSE_FILE = path.join(DATA_ROOT, 'house-defaults.json');
+const HOUSE_EXAMPLE = path.join(__dirname, 'house-defaults.example.json');
+function seedHouseDefaults() {
+  try {
+    if (!fs.existsSync(HOUSE_FILE) && fs.existsSync(HOUSE_EXAMPLE)) {
+      fs.mkdirSync(DATA_ROOT, { recursive: true });
+      fs.copyFileSync(HOUSE_EXAMPLE, HOUSE_FILE);
+      console.log('[setup] seeded house defaults →', HOUSE_FILE, '(edit this file to set your org standard)');
+    }
+  } catch (e) { console.error('house-defaults seed failed (non-fatal):', e.message); }
+}
+function houseDefaults() {
+  for (const f of [HOUSE_FILE, HOUSE_EXAMPLE]) {
+    try { if (fs.existsSync(f)) return JSON.parse(fs.readFileSync(f, 'utf8')); } catch (e) { /* fall through */ }
+  }
+  return null;
+}
+seedHouseDefaults();
+
 app.use(express.json({ limit: '2mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -241,6 +267,14 @@ app.post('/api/projects', (req, res) => {
     id: storage.newId(), name, status: 'draft',
     createdAt: now, updatedAt: now, answers: emptyAnswers(),
   };
+  // Pre-seed the architecture decisions from the org house defaults; every value
+  // stays fully editable per project in the wizard.
+  const hd = houseDefaults();
+  if (hd && Array.isArray(hd.decisions) && hd.decisions.length) {
+    project.answers.decisions = hd.decisions.map((d) => ({
+      concern: d.concern || '', choice: d.choice || '', why: d.why || '',
+    }));
+  }
   storage.saveProject(project);
   res.status(201).json(project);
 });
@@ -990,6 +1024,7 @@ app.get('/api/config', (req, res) => {
     proxyUrl: process.env.PROXY_URL || (ip ? `http://${ip}:8080/dashboard/` : null),
     aiServerKey: reverse.serverKeyConfigured(),   // a server-side ANTHROPIC_API_KEY is set (GUI can also supply one)
     aiModel: reverse.MODEL,
+    houseDefaults: houseDefaults(),   // org standard stack; seeds new-project decisions + wizard hints
   });
 });
 
