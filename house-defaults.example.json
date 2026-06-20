@@ -1,0 +1,31 @@
+{
+  "_comment": "House defaults — your org's standard stack. On first run the server copies this to house-defaults.json in the persistent data volume (so updates never overwrite it); edit THAT file to change your standard. New projects pre-seed their architecture decisions from here, and every value is editable per project in the wizard. Set choices to '' to ship no opinion.",
+  "decisions": [
+    {
+      "concern": "Database",
+      "choice": "PostgreSQL 16 + pgvector (self-hosted, Docker)",
+      "why": "Relational integrity + native vector search (pgvector) in one engine; runs as a container beside the app — full data ownership, no managed-service lock-in, portable to any host."
+    },
+    {
+      "concern": "Auth",
+      "choice": "OIDC SSO (Entra ID / Microsoft 365) + app-minted JWT in httpOnly cookie",
+      "why": "Reuse the org identity provider for true SSO/MFA; the app mints its own short-lived session cookie — no third-party hosted-auth vendor or per-seat cost."
+    },
+    {
+      "concern": "Hosting",
+      "choice": "Docker Compose behind Traefik on the LAN (images built on host)",
+      "why": "Self-hosted, one-command deploy on owned infrastructure; no managed-runtime lock-in or egress cost — revisit if uptime/scale exceeds a single host."
+    },
+    {
+      "concern": "Secrets",
+      "choice": "Infisical (self-hosted) central secret store",
+      "why": "Apps pull DATABASE_URL/secrets via a machine identity at deploy/runtime; nothing committed to source; one place to rotate."
+    }
+  ],
+  "placeholders": {
+    "decisions": {
+      "choice": "your decision (e.g. database, auth, hosting)",
+      "why": "the trade-off you accept"
+    }
+  }
+}

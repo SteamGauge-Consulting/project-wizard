@@ -12,8 +12,8 @@
       { k: 'test', th: 'How you’d test it (plain English)', ph: 'A new visitor finishes checkout in under 3 minutes', w: '60%', ml: true }] },
     decisions: { label: 'decision', cols: [
       { k: 'concern', th: 'Concern', ph: 'Database', w: '20%' },
-      { k: 'choice', th: 'Decision', ph: 'PostgreSQL 16 + pgvector (Docker)', w: '28%' },
-      { k: 'why', th: 'Why (the trade-off you accept)', ph: 'One engine for relational + vector; self-hosted in a container', w: '52%', ml: true }] },
+      { k: 'choice', th: 'Decision', ph: 'your decision (e.g. database, auth, hosting)', w: '28%' },
+      { k: 'why', th: 'Why (the trade-off you accept)', ph: 'the trade-off you accept', w: '52%', ml: true }] },
     milestones: { label: 'milestone', cols: [
       { k: 'name', th: 'Milestone', ph: 'M1 · Foundation', w: '24%' },
       { k: 'done', th: 'Done means…', ph: 'App deployed, reachable over HTTPS', w: '54%', ml: true },
@@ -34,10 +34,13 @@
       { title: 'Owner can invite teammates', priority: 'Should', test: 'An owner sends an invite and the invitee accepts and sees the shared workspace within the same session' },
       { title: 'Users can export their data', priority: 'Should', test: 'A user exports all their records as CSV and the downloaded file contains every row with no truncation' },
     ],
+    // Neutral fallback only — the real seed comes from the org house defaults
+    // (house-defaults.json, served via /api/config) and is applied below. No
+    // specific architecture is hardcoded here.
     decisions: [
-      { concern: 'Database', choice: 'PostgreSQL 16 + pgvector (self-hosted, Docker)', why: 'Relational integrity + native vector search (pgvector) in one engine; runs as a container beside the app — full data ownership, no managed-service lock-in, portable to any host' },
-      { concern: 'Auth', choice: 'OIDC SSO (Entra ID / Microsoft 365) + app-minted JWT in httpOnly cookie', why: 'Reuse the org identity provider for true SSO/MFA; app mints its own short-lived session cookie — no third-party hosted-auth vendor or per-seat cost' },
-      { concern: 'Hosting', choice: 'Docker Compose behind Traefik on the LAN (images built on host)', why: 'Self-hosted, one-command deploy on owned infrastructure; no managed-runtime lock-in or egress cost — revisit if uptime/scale exceeds a single host' },
+      { concern: 'Database', choice: '', why: '' },
+      { concern: 'Auth', choice: '', why: '' },
+      { concern: 'Hosting', choice: '', why: '' },
     ],
     milestones: [
       { name: 'M1 · Foundation', done: 'App containerized and deployed; a stranger can reach it over HTTPS', target: 'Week 2' },
@@ -54,6 +57,22 @@
       { area: 'Observability', target: 'Structured logs, RED metrics, traces, and alerting on SLO burn', adr: 'OpenTelemetry → managed backend; dashboards + on-call alerts' },
     ],
   };
+
+  // House defaults: the org's standard stack lives in house-defaults.json (set at
+  // install/setup), exposed via /api/config. We use it to seed the Decisions
+  // "Load examples" button and placeholder hints, so no specific architecture is
+  // baked into this file. New projects are also pre-seeded server-side; per
+  // project everything stays editable.
+  fetch('/api/config').then(function (r) { return r.json(); }).then(function (c) {
+    var hd = c && c.houseDefaults;
+    if (!hd) return;
+    if (Array.isArray(hd.decisions) && hd.decisions.length) EXAMPLES.decisions = hd.decisions;
+    if (hd.placeholders && hd.placeholders.decisions) {
+      var dp = hd.placeholders.decisions, cols = TABLES.decisions.cols;
+      if (dp.choice) cols[1].ph = dp.choice;
+      if (dp.why) cols[2].ph = dp.why;
+    }
+  }).catch(function () {});
 
   var HINTS = {
     requirements: 'One row per requirement. Priority is MoSCoW. Describe what the user should EXPERIENCE, in plain English — concrete and observable, naming an actor and an outcome — not how to build it. Say “reordering feels smooth and works by touch”, not “350ms SortableJS drag with forceFallback”. The agent picks the libraries, timings, and patterns, and turns each line into a Given/When/Then.',
