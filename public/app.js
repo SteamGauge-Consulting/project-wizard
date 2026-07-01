@@ -812,7 +812,8 @@
     });
   }
 
-  // Global: "Connect Agent" in the home management bar — pick any project.
+  // Global: "Connect Agent" in the home management bar — lists every project's
+  // keys up front (grouped by project), with a create-a-key form below.
   function connectorSheet() {
     var bg = document.createElement('div'); bg.className = 'modal-bg';
     bg.innerHTML = '<div class="modal exp-modal" style="width:min(640px,94vw);max-width:640px"><h3>' + ic('nodes') + 'Connect a Claude session</h3>' +
@@ -820,26 +821,102 @@
       '<div class="dform">' +
         '<label>Wizard API base (LAN)</label>' +
         '<div style="display:flex;gap:8px;align-items:center"><code id="conn-base" style="flex:1;padding:8px;background:var(--code);color:var(--text);border:1px solid var(--line);border-radius:6px;overflow:auto;white-space:nowrap">…</code><button class="btn sm" id="conn-base-copy">Copy</button></div>' +
-        '<label style="margin-top:12px">Project</label><select id="conn-proj"><option value="">Loading projects…</option></select>' +
-        '<div id="conn-body" style="margin-top:8px"><div class="hint">Pick a project to create a key.</div></div>' +
+        '<div id="conn-keys" style="margin-top:16px"><div class="hint">Loading keys…</div></div>' +
+        '<div style="border-top:1px solid var(--line);padding-top:14px;margin-top:16px"><b style="font-size:13.5px">Create a key</b></div>' +
+        '<div class="row2" style="margin-top:10px">' +
+          '<div><label>Project</label><select id="conn-proj"><option value="">Loading…</option></select></div>' +
+          '<div><label>Access</label><select id="conn-scope"><option value="write">Read + write (edit, deploy, keys)</option><option value="read">Read only</option></select></div>' +
+        '</div>' +
+        '<div class="row2" style="margin-top:10px;align-items:end">' +
+          '<div><label>Label (optional)</label><input type="text" id="conn-name" placeholder="e.g. build session" /></div>' +
+          '<div><button class="btn sm primary" id="conn-create" style="width:100%">' + ic('sparkles') + 'Create key</button></div>' +
+        '</div>' +
+        '<div id="conn-result" style="display:none;margin-top:14px"></div>' +
       '</div>' +
       '<div class="row"><button class="btn" id="conn-close">Close</button></div></div>';
     document.body.appendChild(bg);
     bg.addEventListener('click', function (e) { if (e.target === bg) bg.remove(); });
     bg.querySelector('#conn-close').addEventListener('click', function () { bg.remove(); });
+
     var baseEl = bg.querySelector('#conn-base');
     var lanBase = location.origin;
     wizardLanBase().then(function (base) { lanBase = base; baseEl.textContent = base + '/api/agent'; });
     bg.querySelector('#conn-base-copy').addEventListener('click', function () { copyText(baseEl.textContent, this); });
-    var sel = bg.querySelector('#conn-proj');
-    fetch('/api/projects').then(function (r) { return r.json(); }).then(function (projects) {
-      if (!projects.length) { sel.innerHTML = '<option value="">No projects yet — create one first</option>'; return; }
-      sel.innerHTML = '<option value="">Select a project…</option>' + projects.map(function (p) { return '<option value="' + p.id + '">' + esc(p.name) + '</option>'; }).join('');
-    });
-    sel.addEventListener('change', function () {
-      var pid = sel.value; var bodyEl = bg.querySelector('#conn-body');
-      if (!pid) { bodyEl.innerHTML = '<div class="hint">Pick a project to create a key.</div>'; return; }
-      agentKeyPanel(bodyEl, pid, lanBase);
+
+    var keysEl = bg.querySelector('#conn-keys');
+    var projSel = bg.querySelector('#conn-proj');
+    var result = bg.querySelector('#conn-result');
+    var nameById = {};
+
+    function loadProjects() {
+      return fetch('/api/projects').then(function (r) { return r.json(); }).then(function (projects) {
+        nameById = {};
+        projects.forEach(function (p) { nameById[p.id] = p.name; });
+        projSel.innerHTML = projects.length
+          ? projects.map(function (p) { return '<option value="' + p.id + '">' + esc(p.name) + '</option>'; }).join('')
+          : '<option value="">No projects yet — create one first</option>';
+        return projects;
+      });
+    }
+
+    // Fetch every project's keys and render them grouped by project.
+    function refreshKeys() {
+      keysEl.innerHTML = '<div class="hint">Loading keys…</div>';
+      loadProjects().then(function (projects) {
+        if (!projects.length) { keysEl.innerHTML = ''; return; }
+        return Promise.all(projects.map(function (p) {
+          return fetch('/api/projects/' + p.id + '/agent-tokens').then(function (r) { return r.json(); })
+            .then(function (d) { return { p: p, tokens: (d && d.tokens) || [] }; })
+            .catch(function () { return { p: p, tokens: [] }; });
+        })).then(function (groups) {
+          var withKeys = groups.filter(function (g) { return g.tokens.length; });
+          if (!withKeys.length) { keysEl.innerHTML = '<div class="hint">No keys yet on any project. Create one below.</div>'; return; }
+          keysEl.innerHTML = '<div class="hint" style="margin-bottom:6px">Existing keys</div>' + withKeys.map(function (g) {
+            return '<div style="margin-bottom:10px"><div style="font-weight:600;font-size:13px;margin-bottom:4px">' + esc(g.p.name) + '</div>' +
+              g.tokens.map(function (t) {
+                var state = t.revokedAt ? ' · <span style="color:var(--dim)">revoked</span>' : '';
+                var used = t.lastUsedAt ? ' · last used ' + fmtDate(t.lastUsedAt) : '';
+                return '<div class="exp-opt" style="align-items:center">' +
+                  '<div><b>' + esc(t.name) + '</b> <span class="pill ' + (t.scope === 'write' ? 'generated' : 'draft') + '">' + esc(t.scope) + '</span>' +
+                  '<div class="hint">' + esc(t.prefix) + ' · created ' + fmtDate(t.createdAt) + used + state + '</div></div>' +
+                  (t.revokedAt ? '' : '<button class="btn sm" data-revoke="' + t.id + '" data-proj="' + g.p.id + '">Revoke</button>') +
+                '</div>';
+              }).join('') + '</div>';
+          }).join('');
+          keysEl.querySelectorAll('[data-revoke]').forEach(function (b) {
+            b.addEventListener('click', function () {
+              if (!confirm('Revoke this key? Any session using it loses access immediately.')) return;
+              fetch('/api/projects/' + b.getAttribute('data-proj') + '/agent-tokens/' + b.getAttribute('data-revoke'), { method: 'DELETE' }).then(function () { refreshKeys(); });
+            });
+          });
+        });
+      });
+    }
+    refreshKeys();
+
+    bg.querySelector('#conn-create').addEventListener('click', function () {
+      var pid = projSel.value;
+      if (!pid) { projSel.focus(); return; }
+      var scope = bg.querySelector('#conn-scope').value;
+      var name = bg.querySelector('#conn-name').value.trim();
+      var btn = this; btn.disabled = true;
+      api('/api/projects/' + pid + '/agent-tokens', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ scope: scope, name: name, base: lanBase || '' }) })
+        .then(function (res) {
+          btn.disabled = false;
+          var j = res.j || {};
+          result.style.display = 'block';
+          if (!res.ok) { result.innerHTML = '<div class="hint" style="color:#c0392b">' + esc(j.error || 'could not create key') + '</div>'; return; }
+          result.innerHTML =
+            '<div class="ok-note">✦ Key created for <b>' + esc(nameById[pid] || '') + '</b> — copy it now. The secret is shown <b>only once</b>.</div>' +
+            '<label style="margin-top:10px">Paste this into a new Claude session</label>' +
+            '<pre id="conn-kit" style="white-space:pre-wrap;word-break:break-word;max-height:340px;overflow:auto;background:var(--code);color:var(--text);border:1px solid var(--line);padding:10px;border-radius:6px;font-size:12px;line-height:1.45"></pre>' +
+            '<div style="display:flex;gap:8px;margin-top:8px"><button class="btn sm primary" id="conn-copy">Copy for Claude</button>' +
+            '<button class="btn sm" id="conn-copytok">Copy token only</button></div>';
+          result.querySelector('#conn-kit').textContent = j.kit || '';
+          result.querySelector('#conn-copy').addEventListener('click', function () { copyText(j.kit || '', this); });
+          result.querySelector('#conn-copytok').addEventListener('click', function () { copyText(j.token || '', this); });
+          refreshKeys();
+        }).catch(function (e) { btn.disabled = false; result.style.display = 'block'; result.innerHTML = '<div class="hint">' + esc(e.message) + '</div>'; });
     });
   }
 
