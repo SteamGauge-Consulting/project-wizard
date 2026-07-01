@@ -914,8 +914,8 @@ app.post('/api/projects/:id/deploy', (req, res) => {
   const sshPort = String(b.sshPort || '22').trim();
   const target = user + '@' + host;
   const meta = deployBundle.files(params)._meta;
-  const sshArgs = ['-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null', '-o', 'ConnectTimeout=15', '-p', sshPort];
-  const sshCmdStr = 'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=15 -p ' + sshPort;
+  const sshArgs = ['-F', '/dev/null', '-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null', '-o', 'ConnectTimeout=15', '-p', sshPort];
+  const sshCmdStr = 'ssh -F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=15 -p ' + sshPort;
   const env = usePassword ? Object.assign({}, process.env, { SSHPASS: String(b.password) }) : process.env;
 
   let stage;
@@ -1110,7 +1110,9 @@ app.post('/api/self-update', (req, res) => {
   const target = user + '@' + hostIp;
   // BatchMode=yes on the key path so a bad key fails fast instead of hanging on a
   // password prompt (there's no tty); password path leaves it off so sshpass works.
-  const sshOpts = ['-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null', '-o', 'ConnectTimeout=15', '-o', 'BatchMode=' + (usePassword ? 'no' : 'yes'), '-p', sshPort];
+  // -F /dev/null: ignore any ~/.ssh/config (the host's is bind-mounted read-only and
+  // not root-owned, which SSH rejects as "Bad owner or permissions").
+  const sshOpts = ['-F', '/dev/null', '-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null', '-o', 'ConnectTimeout=15', '-o', 'BatchMode=' + (usePassword ? 'no' : 'yes'), '-p', sshPort];
   const env = usePassword ? Object.assign({}, process.env, { SSHPASS: password }) : process.env;
   const program = usePassword ? 'sshpass' : 'ssh';
   const withAuth = (cmd) => usePassword ? ['-e', 'ssh', ...sshOpts, target, cmd] : [...sshOpts, target, cmd];
