@@ -731,6 +731,33 @@
     else { fallbackCopy(text); done(); }
   }
 
+  // Render a key's paste-in kit into `container`, with copy buttons. `note` is
+  // trusted HTML (a short header line).
+  function renderKit(container, kit, token, note) {
+    container.style.display = 'block';
+    container.innerHTML =
+      (note ? '<div class="ok-note">' + note + '</div>' : '') +
+      '<label style="margin-top:10px">Paste this into a new Claude session</label>' +
+      '<pre style="white-space:pre-wrap;word-break:break-word;max-height:340px;overflow:auto;background:var(--code);color:var(--text);border:1px solid var(--line);padding:10px;border-radius:6px;font-size:12px;line-height:1.45"></pre>' +
+      '<div style="display:flex;gap:8px;margin-top:8px"><button class="btn sm primary" data-k="kit">Copy for Claude</button><button class="btn sm" data-k="tok">Copy token only</button></div>';
+    container.querySelector('pre').textContent = kit || '';
+    container.querySelector('[data-k="kit"]').addEventListener('click', function () { copyText(kit || '', this); });
+    container.querySelector('[data-k="tok"]').addEventListener('click', function () { copyText(token || '', this); });
+  }
+
+  // Fetch + display the paste-in kit for an existing (live) key.
+  function showExistingKit(projId, tid, base, resultEl, btn) {
+    if (btn) btn.disabled = true;
+    fetch('/api/projects/' + projId + '/agent-tokens/' + tid + '/kit?base=' + encodeURIComponent(base || ''))
+      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+      .then(function (res) {
+        if (btn) btn.disabled = false;
+        if (!res.ok) { resultEl.style.display = 'block'; resultEl.innerHTML = '<div class="hint" style="color:#c0392b">' + esc((res.j && res.j.error) || 'could not load prompt') + '</div>'; return; }
+        renderKit(resultEl, res.j.kit, res.j.token, 'Prompt for <b>' + esc(res.j.name || 'key') + '</b>');
+        resultEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }).catch(function (e) { if (btn) btn.disabled = false; resultEl.style.display = 'block'; resultEl.innerHTML = '<div class="hint">' + esc(e.message) + '</div>'; });
+  }
+
   // Renders the key-minting UI + existing-key list for one project into `body`.
   // `baseOverride` is the LAN origin baked into the kit so it's reachable off-box.
   function agentKeyPanel(body, id, baseOverride) {
@@ -758,9 +785,16 @@
           return '<div class="exp-opt" style="align-items:center">' +
             '<div><b>' + esc(t.name) + '</b> <span class="pill ' + (t.scope === 'write' ? 'generated' : 'draft') + '">' + esc(t.scope) + '</span>' +
             '<div class="hint">' + esc(t.prefix) + ' · created ' + fmtDate(t.createdAt) + used + state + '</div></div>' +
-            (t.revokedAt ? '' : '<button class="btn sm" data-revoke="' + t.id + '">Revoke</button>') +
+            '<div style="display:flex;gap:6px">' +
+              (t.revokedAt ? '' :
+                ((t.hasSecret ? '<button class="btn sm" data-showkit="' + t.id + '">Show prompt</button>' : '') +
+                 '<button class="btn sm" data-revoke="' + t.id + '">Revoke</button>')) +
+            '</div>' +
           '</div>';
         }).join('');
+        list.querySelectorAll('[data-showkit]').forEach(function (b) {
+          b.addEventListener('click', function () { showExistingKit(id, b.getAttribute('data-showkit'), baseOverride, result, b); });
+        });
         list.querySelectorAll('[data-revoke]').forEach(function (b) {
           b.addEventListener('click', function () {
             if (!confirm('Revoke this key? Any session using it loses access immediately.')) return;
@@ -779,17 +813,8 @@
         .then(function (res) {
           btn.disabled = false;
           var j = res.j || {};
-          result.style.display = 'block';
-          if (!res.ok) { result.innerHTML = '<div class="hint" style="color:#c0392b">' + esc(j.error || 'could not create key') + '</div>'; return; }
-          result.innerHTML =
-            '<div class="ok-note">✦ Key created — copy it now. For security the secret is shown <b>only once</b>.</div>' +
-            '<label style="margin-top:10px">Paste this into a new Claude session</label>' +
-            '<pre id="ak-kit" style="white-space:pre-wrap;word-break:break-word;max-height:340px;overflow:auto;background:var(--code);color:var(--text);border:1px solid var(--line);padding:10px;border-radius:6px;font-size:12px;line-height:1.45"></pre>' +
-            '<div style="display:flex;gap:8px;margin-top:8px"><button class="btn sm primary" id="ak-copy">Copy for Claude</button>' +
-            '<button class="btn sm" id="ak-copytok">Copy token only</button></div>';
-          result.querySelector('#ak-kit').textContent = j.kit || '';
-          result.querySelector('#ak-copy').addEventListener('click', function () { copyText(j.kit || '', this); });
-          result.querySelector('#ak-copytok').addEventListener('click', function () { copyText(j.token || '', this); });
+          if (!res.ok) { result.style.display = 'block'; result.innerHTML = '<div class="hint" style="color:#c0392b">' + esc(j.error || 'could not create key') + '</div>'; return; }
+          renderKit(result, j.kit, j.token, '✦ Key created — re-open this prompt anytime with “Show prompt”.');
           refreshList();
         }).catch(function (e) { btn.disabled = false; result.style.display = 'block'; result.innerHTML = '<div class="hint">' + esc(e.message) + '</div>'; });
     });
@@ -879,10 +904,17 @@
                 return '<div class="exp-opt" style="align-items:center">' +
                   '<div><b>' + esc(t.name) + '</b> <span class="pill ' + (t.scope === 'write' ? 'generated' : 'draft') + '">' + esc(t.scope) + '</span>' +
                   '<div class="hint">' + esc(t.prefix) + ' · created ' + fmtDate(t.createdAt) + used + state + '</div></div>' +
-                  (t.revokedAt ? '' : '<button class="btn sm" data-revoke="' + t.id + '" data-proj="' + g.p.id + '">Revoke</button>') +
+                  '<div style="display:flex;gap:6px">' +
+                    (t.revokedAt ? '' :
+                      ((t.hasSecret ? '<button class="btn sm" data-showkit="' + t.id + '" data-proj="' + g.p.id + '">Show prompt</button>' : '') +
+                       '<button class="btn sm" data-revoke="' + t.id + '" data-proj="' + g.p.id + '">Revoke</button>')) +
+                  '</div>' +
                 '</div>';
               }).join('') + '</div>';
           }).join('');
+          keysEl.querySelectorAll('[data-showkit]').forEach(function (b) {
+            b.addEventListener('click', function () { showExistingKit(b.getAttribute('data-proj'), b.getAttribute('data-showkit'), lanBase, result, b); });
+          });
           keysEl.querySelectorAll('[data-revoke]').forEach(function (b) {
             b.addEventListener('click', function () {
               if (!confirm('Revoke this key? Any session using it loses access immediately.')) return;
@@ -904,17 +936,8 @@
         .then(function (res) {
           btn.disabled = false;
           var j = res.j || {};
-          result.style.display = 'block';
-          if (!res.ok) { result.innerHTML = '<div class="hint" style="color:#c0392b">' + esc(j.error || 'could not create key') + '</div>'; return; }
-          result.innerHTML =
-            '<div class="ok-note">✦ Key created for <b>' + esc(nameById[pid] || '') + '</b> — copy it now. The secret is shown <b>only once</b>.</div>' +
-            '<label style="margin-top:10px">Paste this into a new Claude session</label>' +
-            '<pre id="conn-kit" style="white-space:pre-wrap;word-break:break-word;max-height:340px;overflow:auto;background:var(--code);color:var(--text);border:1px solid var(--line);padding:10px;border-radius:6px;font-size:12px;line-height:1.45"></pre>' +
-            '<div style="display:flex;gap:8px;margin-top:8px"><button class="btn sm primary" id="conn-copy">Copy for Claude</button>' +
-            '<button class="btn sm" id="conn-copytok">Copy token only</button></div>';
-          result.querySelector('#conn-kit').textContent = j.kit || '';
-          result.querySelector('#conn-copy').addEventListener('click', function () { copyText(j.kit || '', this); });
-          result.querySelector('#conn-copytok').addEventListener('click', function () { copyText(j.token || '', this); });
+          if (!res.ok) { result.style.display = 'block'; result.innerHTML = '<div class="hint" style="color:#c0392b">' + esc(j.error || 'could not create key') + '</div>'; return; }
+          renderKit(result, j.kit, j.token, '✦ Key created for <b>' + esc(nameById[pid] || '') + '</b> — re-open this prompt anytime with “Show prompt”.');
           refreshKeys();
         }).catch(function (e) { btn.disabled = false; result.style.display = 'block'; result.innerHTML = '<div class="hint">' + esc(e.message) + '</div>'; });
     });
