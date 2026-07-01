@@ -777,28 +777,26 @@
 
     function refreshList() {
       fetch('/api/projects/' + id + '/agent-tokens').then(function (r) { return r.json(); }).then(function (d) {
-        var toks = (d && d.tokens) || [];
+        var toks = ((d && d.tokens) || []).filter(function (t) { return !t.revokedAt; });
         if (!toks.length) { list.innerHTML = '<div class="hint">No keys yet for this project.</div>'; return; }
         list.innerHTML = '<div class="hint" style="margin-bottom:6px">Existing keys</div>' + toks.map(function (t) {
-          var state = t.revokedAt ? ' · <span style="color:var(--dim)">revoked</span>' : '';
           var used = t.lastUsedAt ? ' · last used ' + fmtDate(t.lastUsedAt) : '';
           return '<div class="exp-opt" style="align-items:center">' +
             '<div><b>' + esc(t.name) + '</b> <span class="pill ' + (t.scope === 'write' ? 'generated' : 'draft') + '">' + esc(t.scope) + '</span>' +
-            '<div class="hint">' + esc(t.prefix) + ' · created ' + fmtDate(t.createdAt) + used + state + '</div></div>' +
+            '<div class="hint">' + esc(t.prefix) + ' · created ' + fmtDate(t.createdAt) + used + '</div></div>' +
             '<div style="display:flex;gap:6px">' +
-              (t.revokedAt ? '' :
-                ((t.hasSecret ? '<button class="btn sm" data-showkit="' + t.id + '">Show prompt</button>' : '') +
-                 '<button class="btn sm" data-revoke="' + t.id + '">Revoke</button>')) +
+              (t.hasSecret ? '<button class="btn sm" data-showkit="' + t.id + '">Show prompt</button>' : '') +
+              '<button class="btn sm" data-del="' + t.id + '">Delete</button>' +
             '</div>' +
           '</div>';
         }).join('');
         list.querySelectorAll('[data-showkit]').forEach(function (b) {
           b.addEventListener('click', function () { showExistingKit(id, b.getAttribute('data-showkit'), baseOverride, result, b); });
         });
-        list.querySelectorAll('[data-revoke]').forEach(function (b) {
+        list.querySelectorAll('[data-del]').forEach(function (b) {
           b.addEventListener('click', function () {
-            if (!confirm('Revoke this key? Any session using it loses access immediately.')) return;
-            fetch('/api/projects/' + id + '/agent-tokens/' + b.getAttribute('data-revoke'), { method: 'DELETE' }).then(function () { refreshList(); });
+            if (!confirm('Delete this key? Any session using it loses access immediately.')) return;
+            fetch('/api/projects/' + id + '/agent-tokens/' + b.getAttribute('data-del'), { method: 'DELETE' }).then(function () { refreshList(); });
           });
         });
       });
@@ -894,20 +892,19 @@
             .then(function (d) { return { p: p, tokens: (d && d.tokens) || [] }; })
             .catch(function () { return { p: p, tokens: [] }; });
         })).then(function (groups) {
+          groups.forEach(function (g) { g.tokens = g.tokens.filter(function (t) { return !t.revokedAt; }); });
           var withKeys = groups.filter(function (g) { return g.tokens.length; });
           if (!withKeys.length) { keysEl.innerHTML = '<div class="hint">No keys yet on any project. Create one below.</div>'; return; }
           keysEl.innerHTML = '<div class="hint" style="margin-bottom:6px">Existing keys</div>' + withKeys.map(function (g) {
             return '<div style="margin-bottom:10px"><div style="font-weight:600;font-size:13px;margin-bottom:4px">' + esc(g.p.name) + '</div>' +
               g.tokens.map(function (t) {
-                var state = t.revokedAt ? ' · <span style="color:var(--dim)">revoked</span>' : '';
                 var used = t.lastUsedAt ? ' · last used ' + fmtDate(t.lastUsedAt) : '';
                 return '<div class="exp-opt" style="align-items:center">' +
                   '<div><b>' + esc(t.name) + '</b> <span class="pill ' + (t.scope === 'write' ? 'generated' : 'draft') + '">' + esc(t.scope) + '</span>' +
-                  '<div class="hint">' + esc(t.prefix) + ' · created ' + fmtDate(t.createdAt) + used + state + '</div></div>' +
+                  '<div class="hint">' + esc(t.prefix) + ' · created ' + fmtDate(t.createdAt) + used + '</div></div>' +
                   '<div style="display:flex;gap:6px">' +
-                    (t.revokedAt ? '' :
-                      ((t.hasSecret ? '<button class="btn sm" data-showkit="' + t.id + '" data-proj="' + g.p.id + '">Show prompt</button>' : '') +
-                       '<button class="btn sm" data-revoke="' + t.id + '" data-proj="' + g.p.id + '">Revoke</button>')) +
+                    (t.hasSecret ? '<button class="btn sm" data-showkit="' + t.id + '" data-proj="' + g.p.id + '">Show prompt</button>' : '') +
+                    '<button class="btn sm" data-del="' + t.id + '" data-proj="' + g.p.id + '">Delete</button>' +
                   '</div>' +
                 '</div>';
               }).join('') + '</div>';
@@ -915,10 +912,10 @@
           keysEl.querySelectorAll('[data-showkit]').forEach(function (b) {
             b.addEventListener('click', function () { showExistingKit(b.getAttribute('data-proj'), b.getAttribute('data-showkit'), lanBase, result, b); });
           });
-          keysEl.querySelectorAll('[data-revoke]').forEach(function (b) {
+          keysEl.querySelectorAll('[data-del]').forEach(function (b) {
             b.addEventListener('click', function () {
-              if (!confirm('Revoke this key? Any session using it loses access immediately.')) return;
-              fetch('/api/projects/' + b.getAttribute('data-proj') + '/agent-tokens/' + b.getAttribute('data-revoke'), { method: 'DELETE' }).then(function () { refreshKeys(); });
+              if (!confirm('Delete this key? Any session using it loses access immediately.')) return;
+              fetch('/api/projects/' + b.getAttribute('data-proj') + '/agent-tokens/' + b.getAttribute('data-del'), { method: 'DELETE' }).then(function () { refreshKeys(); });
             });
           });
         });
