@@ -22,6 +22,10 @@ LOG="${PW_UPDATE_LOG:-/tmp/pw-update-all.log}"
 {
   echo "=== $(date -u '+%Y-%m-%dT%H:%M:%SZ') update-all start (branch=$BRANCH) ==="
 
+  # Let the wizard's HTTP response to the browser flush before we recreate its
+  # container out from under it.
+  sleep 4
+
   # 1. Update + rebuild the wizard itself (force-recreate so BUILD_VERSION refreshes).
   if ! bash scripts/update.sh "$BRANCH"; then
     echo "!! wizard update failed — aborting"; exit 1
@@ -38,7 +42,7 @@ LOG="${PW_UPDATE_LOG:-/tmp/pw-update-all.log}"
 
   # 3. Redeploy every deployed app to the new engine (data-preserving).
   echo "-> redeploying deployed apps"
-  if curl -fsS -X POST "http://localhost:${PORT}/api/update-apps" -H 'content-type: application/json' -d '{}'; then
+  if curl -fsS -X POST "http://localhost:${PORT}/api/update-apps" -H 'content-type: application/json' -H "x-deploy-password: ${PW_APP_SSH_PASSWORD:-}" -d '{}'; then
     echo ""
   else
     echo "!! update-apps call failed (apps may need SSH creds) — wizard itself is updated"

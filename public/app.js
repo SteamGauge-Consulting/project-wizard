@@ -840,44 +840,83 @@
   }
 
   // Global: "Update" — pull latest main and rebuild the wizard + redeploy every
-  // deployed app. The wizard restarts itself, so we poll /api/version for the new
-  // build to confirm it came back.
+  // deployed app. Host SSH creds are saved on the wizard (shown as a status with
+  // an Edit button), so you don't re-enter them. Polls /api/version to confirm the
+  // wizard came back.
   function updateSheet() {
     var bg = document.createElement('div'); bg.className = 'modal-bg';
     bg.innerHTML = '<div class="modal"><h3>' + ic('refresh') + 'Update to latest</h3>' +
       '<p class="hint">Pulls the latest <b>main</b> and updates <b>this wizard</b> plus every deployed app (data-preserving). The wizard rebuilds itself, so this page will be briefly unreachable (~30–60s) before it returns on the new version.</p>' +
-      '<label>Host SSH login <span style="text-transform:none;letter-spacing:0;color:var(--dim)">(user the wizard runs as on its host)</span></label>' +
-      '<input type="text" id="up-user" placeholder="blank = server default (e.g. docker); set to e.g. sgcadmin if different" />' +
-      '<label style="margin-top:10px">Host SSH password <span style="text-transform:none;letter-spacing:0;color:var(--dim)">(only if key auth isn’t set up)</span></label>' +
-      '<input type="password" id="up-pass" placeholder="leave blank to use the wizard’s mounted SSH key" />' +
+      '<div id="up-creds" class="dform" style="margin:8px 0 2px"><div class="hint">Checking host credentials…</div></div>' +
       '<div id="up-note" class="hint" style="margin-top:12px"></div>' +
-      '<div class="row"><button class="btn ghost" id="up-cancel">Cancel</button><button class="btn primary" id="up-go">' + ic('refresh') + 'Update now</button></div></div>';
+      '<div class="row"><button class="btn ghost" id="up-cancel">Close</button><button class="btn primary" id="up-go" disabled>' + ic('refresh') + 'Update now</button></div></div>';
     document.body.appendChild(bg);
+    var credsEl = bg.querySelector('#up-creds');
     var note = bg.querySelector('#up-note');
+    var goBtn = bg.querySelector('#up-go');
     function close() { bg.remove(); }
     bg.querySelector('#up-cancel').addEventListener('click', close);
     bg.addEventListener('click', function (e) { if (e.target === bg) close(); });
-    bg.querySelector('#up-go').addEventListener('click', function () {
+
+    var editing = false;
+    function renderCreds() {
+      fetch('/api/self-update/creds').then(function (r) { return r.json(); }).then(function (c) {
+        if (!c.hostIp) {
+          credsEl.innerHTML = '<div class="hint" style="color:var(--red)">HOST_IP isn’t set on this wizard, so it can’t update itself from here — update from the host with <code>scripts/update.sh</code>.</div>';
+          goBtn.disabled = true; return;
+        }
+        goBtn.disabled = false;
+        if (!editing) {
+          var passline = c.hasPassword ? '<span class="pill generated">password saved</span>' : '<span class="pill draft">SSH key</span>';
+          credsEl.innerHTML =
+            '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
+              '<span class="ok-note" style="margin:0">✓ Host creds active</span>' +
+              '<code>' + esc(c.user) + '@' + esc(c.hostIp) + '</code>' + passline +
+              '<button class="btn sm" id="up-edit">Edit</button>' +
+            '</div>' +
+            '<div class="hint" style="margin-top:4px">Saved on this wizard — you won’t be asked again.</div>';
+          bg.querySelector('#up-edit').addEventListener('click', function () { editing = true; renderCreds(); });
+        } else {
+          credsEl.innerHTML =
+            '<label>Host SSH login</label><input type="text" id="up-user" value="' + esc(c.user) + '" placeholder="e.g. docker or sgcadmin" />' +
+            '<label style="margin-top:8px">Host SSH password <span style="text-transform:none;letter-spacing:0;color:var(--dim)">(blank = keep saved / use SSH key)</span></label>' +
+            '<input type="password" id="up-pass" placeholder="' + (c.hasPassword ? 'saved — leave blank to keep' : 'leave blank to use the mounted SSH key') + '" />' +
+            '<div style="display:flex;gap:8px;margin-top:10px"><button class="btn sm primary" id="up-save">Save creds</button><button class="btn sm" id="up-canceledit">Cancel</button></div>';
+          bg.querySelector('#up-canceledit').addEventListener('click', function () { editing = false; renderCreds(); });
+          bg.querySelector('#up-save').addEventListener('click', function () {
+            var body = { user: bg.querySelector('#up-user').value };
+            var pw = bg.querySelector('#up-pass').value;
+            if (pw !== '') body.password = pw;
+            var sb = this; sb.disabled = true; note.style.color = ''; note.textContent = '';
+            api('/api/self-update/creds', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }).then(function (res) {
+              sb.disabled = false;
+              if (!res.ok) { note.style.color = 'var(--red)'; note.textContent = '✗ ' + ((res.j && res.j.error) || 'could not save'); return; }
+              editing = false; renderCreds();
+            }).catch(function (e) { sb.disabled = false; note.style.color = 'var(--red)'; note.textContent = '✗ ' + e.message; });
+          });
+        }
+      }).catch(function () { credsEl.innerHTML = '<div class="hint">Could not load credentials.</div>'; });
+    }
+    renderCreds();
+
+    goBtn.addEventListener('click', function () {
       var btn = this; btn.disabled = true;
-      var pass = bg.querySelector('#up-pass').value;
-      var uphuser = bg.querySelector('#up-user').value.trim();
       note.style.color = ''; note.textContent = 'Starting update on the host…';
-      api('/api/self-update', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ user: uphuser, password: pass }) }).then(function (res) {
+      api('/api/self-update', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).then(function (res) {
         var j = res.j || {};
         if (!res.ok) { btn.disabled = false; note.innerHTML = '<span style="color:var(--red)">✗ ' + esc(j.error || 'update failed') + '</span>' + (j.hint ? '<div class="hint" style="margin-top:6px">' + esc(j.hint) + '</div>' : ''); return; }
         note.innerHTML = '✓ Update started. The wizard is rebuilding — this page will drop for ~30–60s, then come back on the new version. Waiting…';
-        // Poll /api/version; when it changes (or first returns after the outage), we're back.
-        var startV = null, tries = 0;
+        var startV = null, wentDown = false, tries = 0;
         fetch('/api/version', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (v) { startV = v && v.version; }).catch(function () {});
         var iv = setInterval(function () {
           tries++;
           fetch('/api/version', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (v) {
-            if (v && v.version && (!startV || v.version !== startV)) {
+            if (v && v.version && (wentDown || !startV || v.version !== startV)) {
               clearInterval(iv);
               note.innerHTML = '✓ Wizard is back on <b>' + esc(v.version) + '</b>. Deployed apps are redeploying in the background. <button class="btn sm primary" id="up-reload">Reload</button>';
               var rb = bg.querySelector('#up-reload'); if (rb) rb.addEventListener('click', function () { location.reload(); });
             } else if (tries > 75) { clearInterval(iv); note.innerHTML = 'Still updating — give it another minute, then reload the page.'; }
-          }).catch(function () { /* wizard down mid-rebuild — expected, keep polling */ });
+          }).catch(function () { wentDown = true; /* wizard down mid-rebuild — expected */ });
         }, 4000);
       }).catch(function (e) { btn.disabled = false; note.style.color = 'var(--red)'; note.textContent = '✗ ' + e.message; });
     });

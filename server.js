@@ -1047,7 +1047,7 @@ app.post('/api/update-apps', async (req, res) => {
     const body = {
       name: dt.name || p.name,
       host: dt.host || c.sshHost, user: dt.user || c.sshUser, sshPort: dt.sshPort || c.sshPort,
-      password: (req.body && req.body.password) || c.sshPassword || '',
+      password: (req.headers && req.headers['x-deploy-password']) || (req.body && req.body.password) || c.sshPassword || '',
       hostname: dt.hostname || c.hostname,
       apiKey: c.anthropicKey, linearKey: c.linearKey, linearProjectId: c.linearProjectId,
     };
@@ -1061,35 +1061,79 @@ app.post('/api/update-apps', async (req, res) => {
   res.json({ ok: true, count: results.length, results });
 });
 
+// Host SSH creds for self-update live in the persistent data volume (so they
+// survive the wizard rebuilding itself) — set once, then the Update button just
+// works. Falls back to the DEPLOY_SSH_* env if nothing is stored.
+const HOST_CREDS_FILE = path.join(DATA_ROOT, 'self-update-creds.json');
+function readHostCreds() { try { return JSON.parse(fs.readFileSync(HOST_CREDS_FILE, 'utf8')) || {}; } catch { return {}; } }
+function writeHostCreds(obj) { try { fs.mkdirSync(DATA_ROOT, { recursive: true }); fs.writeFileSync(HOST_CREDS_FILE, JSON.stringify(obj, null, 2)); return true; } catch (e) { return false; } }
+function resolveHostCreds(body) {
+  const s = readHostCreds();
+  const user = String((body && body.user) || s.user || process.env.DEPLOY_SSH_USER || 'docker').trim();
+  const password = String((body && body.password) || s.password || process.env.DEPLOY_SSH_PASSWORD || '');
+  return {
+    user, password, hasPassword: !!password.trim(),
+    userSource: (body && body.user) ? 'request' : s.user ? 'stored' : process.env.DEPLOY_SSH_USER ? 'env' : 'default',
+    passSource: (body && body.password) ? 'request' : s.password ? 'stored' : process.env.DEPLOY_SSH_PASSWORD ? 'env' : null,
+    stored: !!(s.user || s.password),
+  };
+}
+
+// Report the current self-update creds STATUS (never the password value).
+app.get('/api/self-update/creds', (req, res) => {
+  const c = resolveHostCreds(null);
+  res.json({ hostIp: process.env.HOST_IP || null, user: c.user, hasPassword: c.hasPassword, userSource: c.userSource, passSource: c.passSource, stored: c.stored });
+});
+// Save host creds (persisted). Empty password clears the stored one (→ key auth).
+app.post('/api/self-update/creds', (req, res) => {
+  const b = req.body || {};
+  const s = readHostCreds();
+  if (typeof b.user === 'string') { const u = b.user.trim(); if (u) s.user = u; else delete s.user; }
+  if (typeof b.password === 'string') { if (b.password === '') delete s.password; else s.password = b.password; }
+  if (!writeHostCreds(s)) return res.status(500).json({ error: 'could not save credentials to the data volume' });
+  const c = resolveHostCreds(null);
+  res.json({ ok: true, user: c.user, hasPassword: c.hasPassword, stored: c.stored });
+});
+
 // Trigger a full self-update: SSH to this wizard's OWN host and launch the
 // detached scripts/update-all.sh (rebuild wizard → wait → redeploy apps).
 // Returns as soon as it's kicked off — the wizard restarts itself mid-run, so we
-// can't await it. SSH login: ${DEPLOY_SSH_USER:-docker}@${HOST_IP}, key from the
-// mounted ~/.ssh or a supplied/env password.
+// can't await it. Creds come from the stored file / env (see resolveHostCreds);
+// the request body may override them for a one-off run.
 app.post('/api/self-update', (req, res) => {
   const hostIp = (process.env.HOST_IP || '').trim();
   if (!hostIp) return res.status(400).json({ error: 'HOST_IP is not set on this wizard, so it can’t locate its own host to update. Set HOST_IP in the compose env, or update from the host with scripts/update.sh.', code: 'no_host_ip' });
-  const user = String((req.body && req.body.user) || process.env.DEPLOY_SSH_USER || 'docker').trim();
   const sshPort = (process.env.DEPLOY_SSH_PORT || '22').trim();
   const appDir = (process.env.WIZARD_APP_DIR || '~/apps/project-wizard').trim();
-  const password = String((req.body && req.body.password) || process.env.DEPLOY_SSH_PASSWORD || '');
-  const usePassword = !!password.trim();
+  const creds = resolveHostCreds(req.body);
+  const user = creds.user, password = creds.password, usePassword = creds.hasPassword;
   const target = user + '@' + hostIp;
-  const sshOpts = ['-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null', '-o', 'ConnectTimeout=15', '-p', sshPort];
-  // Detach the updater from this SSH session so it survives the wizard's restart.
-  const remote = 'cd ' + appDir + ' && setsid nohup bash scripts/update-all.sh main </dev/null >/tmp/pw-update-all.boot 2>&1 & echo pw-self-update-started';
+  // BatchMode=yes on the key path so a bad key fails fast instead of hanging on a
+  // password prompt (there's no tty); password path leaves it off so sshpass works.
+  const sshOpts = ['-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null', '-o', 'ConnectTimeout=15', '-o', 'BatchMode=' + (usePassword ? 'no' : 'yes'), '-p', sshPort];
   const env = usePassword ? Object.assign({}, process.env, { SSHPASS: password }) : process.env;
   const program = usePassword ? 'sshpass' : 'ssh';
-  const args = usePassword ? ['-e', 'ssh', ...sshOpts, target, remote] : [...sshOpts, target, remote];
-  execFile(program, args, { env, timeout: 30000, maxBuffer: 1024 * 1024 }, (err, stdout, stderr) => {
-    if (err) {
+  const withAuth = (cmd) => usePassword ? ['-e', 'ssh', ...sshOpts, target, cmd] : [...sshOpts, target, cmd];
+  const shq = (s) => "'" + String(s).replace(/'/g, "'\\''") + "'"; // single-quote for the remote shell
+
+  // 1. Fast, non-destructive auth check — so a wrong user/password/key comes back
+  //    as a clean error, not a 502 later.
+  execFile(program, withAuth('echo pw-ssh-ok'), { env, timeout: 20000, maxBuffer: 1 << 20 }, (err, stdout, stderr) => {
+    if (err || !String(stdout).includes('pw-ssh-ok')) {
       return res.status(502).json({
-        error: 'could not SSH to the host (' + target + '): ' + String(stderr || err.message).slice(0, 300),
+        error: 'could not SSH to the host (' + target + '): ' + String(stderr || (err && err.message) || 'no response').slice(0, 300),
         code: 'ssh_failed',
-        hint: 'Enter the host SSH password, or authorize the wizard’s mounted key for ' + target + '. Set DEPLOY_SSH_USER if the host login isn’t “docker”.',
+        hint: 'Check the Host SSH login/password (Edit creds). Authorize the wizard’s mounted key to skip the password.',
       });
     }
+    // 2. Auth works — answer the browser NOW, before the wizard rebuilds itself.
     res.json({ ok: true, started: true, target, message: 'Update started on ' + target + '. The wizard will rebuild (brief downtime) then redeploy your apps.' });
+    // 3. Launch the detached updater; fire-and-forget. Pass the host password to
+    //    update-all.sh via an env var (not a logged arg) so app redeploys on the
+    //    same host reuse it.
+    const passEnv = usePassword ? ('PW_APP_SSH_PASSWORD=' + shq(password) + ' ') : '';
+    const launch = 'cd ' + appDir + ' && ' + passEnv + 'setsid nohup bash scripts/update-all.sh main </dev/null >/tmp/pw-update-all.boot 2>&1 & echo launched';
+    execFile(program, withAuth(launch), { env, timeout: 20000, maxBuffer: 1 << 20 }, () => { /* fire-and-forget */ });
   });
 });
 
