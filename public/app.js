@@ -839,54 +839,6 @@
     });
   }
 
-  // Per-project integration keys editor — stored in project.connections; a
-  // write-scope agent key reads/manages them via GET/PATCH /connections.
-  function projectKeysSheet(id, name) {
-    var bg = document.createElement('div'); bg.className = 'modal-bg';
-    bg.innerHTML = '<div class="modal exp-modal" style="width:min(620px,94vw);max-width:620px"><h3>' + ic('nodes') + 'Integration keys — ' + esc(name || 'project') + '</h3>' +
-      '<p class="hint">Stored on the wizard for this project. A <b>write</b>-scope agent key reads these via <code>/connections</code>, so a Claude session can use and manage Linear, GitHub, and the Claude API. Leave a secret blank to keep it; saved secrets are never shown back.</p>' +
-      '<div id="pk-body" class="dform"><div class="hint">Loading…</div></div>' +
-      '<div class="row"><button class="btn" id="pk-close">Close</button></div></div>';
-    document.body.appendChild(bg);
-    bg.addEventListener('click', function (e) { if (e.target === bg) bg.remove(); });
-    bg.querySelector('#pk-close').addEventListener('click', function () { bg.remove(); });
-    var body = bg.querySelector('#pk-body');
-    function dot(b) { return b ? '<span style="color:var(--accent);font-size:11px;font-weight:600">● set</span>' : '<span style="color:var(--dim);font-size:11px">○ not set</span>'; }
-    function ph(b, hint) { return b ? '•••••••• set — type to replace' : hint; }
-    function render(c, cfg) {
-      body.innerHTML =
-        '<label>Anthropic (Claude) API key ' + dot(cfg.anthropicKey) + '</label><input type="password" id="pk-anthropic" autocomplete="off" placeholder="' + ph(cfg.anthropicKey, 'sk-ant-…') + '">' +
-        '<label>Grok (xAI) API key ' + dot(cfg.grokKey) + '</label><input type="password" id="pk-grok" autocomplete="off" placeholder="' + ph(cfg.grokKey, 'xai-…') + '">' +
-        '<label>Linear API key ' + dot(cfg.linearKey) + '</label><input type="password" id="pk-linkey" autocomplete="off" placeholder="' + ph(cfg.linearKey, 'lin_api_…') + '">' +
-        '<label>Linear project ID</label><input type="text" id="pk-linproj" value="' + esc(c.linearProjectId || '') + '" placeholder="the project this plan syncs with">' +
-        '<label>GitHub repo URL</label><input type="text" id="pk-ghrepo" value="' + esc(c.githubRepoUrl || '') + '" placeholder="https://github.com/org/repo">' +
-        '<label>GitHub token ' + dot(cfg.githubToken) + '</label><input type="password" id="pk-ghtok" autocomplete="off" placeholder="' + ph(cfg.githubToken, 'ghp_…') + '">' +
-        '<div style="margin:14px 0 2px;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim)">Deploy host (SSH)</div>' +
-        '<div class="row2"><div><label>SSH host</label><input type="text" id="pk-sshhost" value="' + esc(c.sshHost || '') + '" placeholder="10.10.0.208"></div><div><label>SSH user</label><input type="text" id="pk-sshuser" value="' + esc(c.sshUser || '') + '" placeholder="docker"></div></div>' +
-        '<div class="row2"><div><label>SSH password ' + dot(cfg.sshPassword) + '</label><input type="password" id="pk-sshpass" autocomplete="off" placeholder="' + ph(cfg.sshPassword, '••••') + '"></div><div><label>SSH port</label><input type="text" id="pk-sshport" value="' + esc(c.sshPort || '') + '" placeholder="22"></div></div>' +
-        '<div style="margin-top:14px;display:flex;gap:10px;align-items:center"><button class="btn sm primary" id="pk-save">Save keys</button><span class="hint" id="pk-st"></span></div>';
-      body.querySelector('#pk-save').addEventListener('click', function () {
-        var st = body.querySelector('#pk-st'); var btn = this;
-        var payload = {
-          anthropicKey: body.querySelector('#pk-anthropic').value, grokKey: body.querySelector('#pk-grok').value,
-          linearKey: body.querySelector('#pk-linkey').value, linearProjectId: body.querySelector('#pk-linproj').value,
-          githubRepoUrl: body.querySelector('#pk-ghrepo').value, githubToken: body.querySelector('#pk-ghtok').value,
-          sshHost: body.querySelector('#pk-sshhost').value, sshUser: body.querySelector('#pk-sshuser').value,
-          sshPort: body.querySelector('#pk-sshport').value, sshPassword: body.querySelector('#pk-sshpass').value,
-        };
-        btn.disabled = true; st.style.color = ''; st.textContent = 'Saving…';
-        api('/api/projects/' + id + '/connections', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) }).then(function (res) {
-          btn.disabled = false;
-          if (!res.ok || !res.j.ok) { st.style.color = 'var(--red)'; st.textContent = '✗ ' + ((res.j && res.j.error) || 'save failed'); return; }
-          load();
-          setTimeout(function () { var s2 = body.querySelector('#pk-st'); if (s2) { s2.style.color = 'var(--accent)'; s2.textContent = '✓ saved — agents read these via /connections'; } }, 60);
-        }).catch(function (e) { btn.disabled = false; st.style.color = 'var(--red)'; st.textContent = '✗ ' + e.message; });
-      });
-    }
-    function load() { fetch('/api/projects/' + id + '/connections').then(function (r) { return r.json(); }).then(function (d) { render(d.effective || {}, d.configured || {}); }).catch(function () { body.innerHTML = '<div class="hint">Could not load.</div>'; }); }
-    load();
-  }
-
   // Global: "Update" — pull latest main and rebuild the wizard + redeploy every
   // deployed app. Host SSH creds are saved on the wizard (shown as a status with
   // an Edit button), so you don't re-enter them. Polls /api/version to confirm the
@@ -989,7 +941,6 @@
           '<div><label>Label (optional)</label><input type="text" id="conn-name" placeholder="e.g. build session" /></div>' +
           '<div><button class="btn sm primary" id="conn-create" style="width:100%">' + ic('sparkles') + 'Create key</button></div>' +
         '</div>' +
-        '<div style="margin-top:10px"><button class="btn sm" id="conn-keys">' + ic('nodes') + 'Integration keys for this project…</button> <span class="hint">Claude · Linear · GitHub · SSH the agent can use</span></div>' +
         '<div id="conn-result" style="display:none;margin-top:14px"></div>' +
       '</div>' +
       '<div class="row"><button class="btn" id="conn-close">Close</button></div></div>';
@@ -1058,12 +1009,6 @@
       });
     }
     refreshKeys();
-
-    bg.querySelector('#conn-keys').addEventListener('click', function () {
-      var pid = projSel.value;
-      if (!pid) { projSel.focus(); return; }
-      projectKeysSheet(pid, nameById[pid]);
-    });
 
     bg.querySelector('#conn-create').addEventListener('click', function () {
       var pid = projSel.value;
