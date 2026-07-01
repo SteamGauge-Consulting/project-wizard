@@ -866,7 +866,9 @@ function stageDeploy(genDir, params) {
 function makeBundleEditable(stage) {
   const libDst = path.join(stage, 'lib');
   try { fs.mkdirSync(libDst, { recursive: true }); } catch (e) {}
-  for (const m of ['docs-editor', 'assess', 'linear', 'render-intake', 'reverse-engineer', 'enrich']) {
+  // governance-gate is required by linear.js + enrich.js — omitting it made pods
+  // crash on boot with MODULE_NOT_FOUND once that dependency was introduced.
+  for (const m of ['docs-editor', 'assess', 'linear', 'render-intake', 'reverse-engineer', 'enrich', 'governance-gate']) {
     try { fs.copyFileSync(path.join(__dirname, 'lib', m + '.js'), path.join(libDst, m + '.js')); }
     catch (e) { console.error('makeBundleEditable: could not ship lib/' + m + '.js:', e.message); }
   }
