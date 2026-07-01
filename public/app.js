@@ -736,13 +736,14 @@
   function agentKeyPanel(body, id, baseOverride) {
     body.innerHTML =
       '<div class="dform">' +
-        '<div class="row2">' +
+        '<div id="ak-list" style="margin-bottom:14px">' + '<div class="hint">Loading keys…</div>' + '</div>' +
+        '<div style="border-top:1px solid var(--line);padding-top:14px"><b style="font-size:13.5px">Create a new key</b></div>' +
+        '<div class="row2" style="margin-top:10px">' +
           '<div><label>Access</label><select id="ak-scope"><option value="write">Read + write (edit, deploy, keys)</option><option value="read">Read only</option></select></div>' +
           '<div><label>Label (optional)</label><input type="text" id="ak-name" placeholder="e.g. build session" /></div>' +
         '</div>' +
         '<div style="margin-top:10px"><button class="btn sm primary" id="ak-create">' + ic('sparkles') + 'Create key</button></div>' +
         '<div id="ak-result" style="display:none;margin-top:14px"></div>' +
-        '<div id="ak-list" style="margin-top:16px"></div>' +
       '</div>';
     var result = body.querySelector('#ak-result');
     var list = body.querySelector('#ak-list');
@@ -797,7 +798,7 @@
   // Per-project: "Share with agent" on the generated-docs page.
   function shareSheet(id) {
     var bg = document.createElement('div'); bg.className = 'modal-bg';
-    bg.innerHTML = '<div class="modal exp-modal"><h3>' + ic('nodes') + 'Share this project with a Claude session</h3>' +
+    bg.innerHTML = '<div class="modal exp-modal" style="width:min(640px,94vw);max-width:640px"><h3>' + ic('nodes') + 'Share this project with a Claude session</h3>' +
       '<p class="hint">Create a key scoped to <b>this project</b>. Paste the block into another Claude session and it can read the full plan, make edits over the API, pull the deploy/SSH details &amp; API keys, and read every other project on this wizard for cross-app context.</p>' +
       '<div id="share-base" class="hint" style="margin:4px 0 10px"></div>' +
       '<div id="share-body"></div>' +
@@ -814,7 +815,7 @@
   // Global: "Connect Agent" in the home management bar — pick any project.
   function connectorSheet() {
     var bg = document.createElement('div'); bg.className = 'modal-bg';
-    bg.innerHTML = '<div class="modal exp-modal"><h3>' + ic('nodes') + 'Connect a Claude session</h3>' +
+    bg.innerHTML = '<div class="modal exp-modal" style="width:min(640px,94vw);max-width:640px"><h3>' + ic('nodes') + 'Connect a Claude session</h3>' +
       '<p class="hint">Give another Claude session direct API access to a project on this wizard — read the plan, edit it, pull the connection details (Docker/SSH host, API keys), and see every other project for cross-app architecture context. Connect over your LAN.</p>' +
       '<div class="dform">' +
         '<label>Wizard API base (LAN)</label>' +
