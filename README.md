@@ -190,11 +190,14 @@ project-wizard/
 │   ├── docs-kit.js        ← vendored generator (the one-file /docs bootstrap)
 │   ├── reverse-engineer.js ← corpus builder + Claude call (structured output) + handoff prompt
 │   ├── static-site.js     ← build flat, relative-linked static HTML
-│   └── deploy-bundle.js   ← Dockerfile/compose/deploy.sh for a target host
+│   ├── deploy-bundle.js   ← Dockerfile/compose/deploy.sh for a target host
+│   ├── agent-tokens.js    ← per-project agent keys + self-describing API surface (manifest/kit/connections)
+│   └── agent-api.js       ← /api/agent router: token-authed read/edit for another Claude session
 ├── public/
 │   ├── index.html · styles.css · app.js   ← shell, design system, router + tiles + export + import screen
 │   ├── wizard.js          ← the PLAN intake steps (incl. the Reference upload step)
 │   └── demo-sequence.html ← worked example (a fully filled-in plan)
+├── AGENT-API.md           ← agent API reference (token auth, endpoints, connections, cross-app reads)
 ├── DEPLOY.md              ← install + pull-based update flow for a host
 └── data/                  ← projects/ + generated/ + attachments/ (gitignored; a volume in prod)
 ```
@@ -213,6 +216,21 @@ project-wizard/
 | `GET` | `/api/projects/:id/download-static` | zip of the standalone static HTML |
 | `GET` | `/api/projects/:id/download-deploy?host=…` | zip of a runnable deploy bundle |
 | `POST` | `/api/projects/:id/deploy` | push + `docker compose up` on a host over SSH |
+| `POST/GET/DELETE` | `/api/projects/:id/agent-tokens[/:tid]` | mint / list / revoke a per-project **agent key** (UI-side) |
+| `*` | `/api/agent/*` | token-authed read/edit surface for another Claude session — see **[AGENT-API.md](AGENT-API.md)** |
+
+### Agent API — hand a project to another Claude session
+
+`/api/agent/*` is a token-authenticated HTTP API (no install, just `curl`) that
+lets a *different* Claude session read and edit one project directly. Mint a key
+from the UI (**Connect Agent** in the home bar, or **Share with agent** on a
+project) — you get a paste-in block for the other session — or via
+`POST /api/projects/:id/agent-tokens`. A `write` key can edit the plan,
+regenerate/assess/apply/deploy, and pull the project's deploy **SSH + API keys**
+(`GET /api/agent/connections`); any key can read **every** project for cross-app
+architecture context (`GET /api/agent/projects`) but never another project's
+secrets. `GET /api/agent` self-describes the whole surface. Full reference:
+**[AGENT-API.md](AGENT-API.md)**.
 
 ## Notes
 
@@ -222,6 +240,14 @@ project-wizard/
   — are used transiently per-request and never written to disk on the server.
   (A `localStorage` "remember on this device" option keeps the API key in the
   owner's browser only.)
+- **Exception — the agent API surfaces env-configured secrets on purpose.** A
+  `write` agent key can read the wizard's own deploy/integration credentials for
+  its project (`GET /api/agent/connections`): the `DEPLOY_SSH_*` target and the
+  `ANTHROPIC_API_KEY` / `LINEAR_API_KEY` / `GITHUB_TOKEN` / `GROK_API_KEY` env
+  values, plus any per-project overrides an agent stored. This is how a handed-off
+  session learns how to reach the Docker host. Read keys never get secret values,
+  and no key ever sees another project's secrets. Keep the wizard on a private
+  network and revoke keys you're done with.
 - The generated ADRs/requirements/milestones are docs-kit's **worked examples** —
   the project's real answers live in `PLAN-INTAKE.json`, and `AI-HANDOFF.md` tells
   a coding agent to rewrite the examples into the project's real artifacts

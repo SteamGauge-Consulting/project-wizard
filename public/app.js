@@ -53,14 +53,19 @@
       });
   }
   function mgmtBarHtml(links) {
-    if (!links.portainer && !links.proxy) return '';
     return (links.portainer ? '<a class="btn sm ghost" target="_blank" href="' + esc(links.portainer) + '" title="Portainer — container management">' + ic('box') + 'Containers</a>' : '') +
-           (links.proxy ? '<a class="btn sm ghost" target="_blank" href="' + esc(links.proxy) + '" title="Traefik — reverse-proxy dashboard">' + ic('nodes') + 'Proxy</a>' : '');
+           (links.proxy ? '<a class="btn sm ghost" target="_blank" href="' + esc(links.proxy) + '" title="Traefik — reverse-proxy dashboard">' + ic('nodes') + 'Proxy</a>' : '') +
+           // Always available: hand another Claude session API access to a project.
+           '<button class="btn sm ghost" id="connect-agent" title="Give a Claude session API access to a project">' + ic('sparkles') + 'Connect Agent</button>';
   }
   function fillMgmt() {
     var slot = app.querySelector('#mgmt-links');
     if (!slot) return;
-    hostLinks().then(function (links) { slot.innerHTML = mgmtBarHtml(links); });
+    hostLinks().then(function (links) {
+      slot.innerHTML = mgmtBarHtml(links);
+      var cb = slot.querySelector('#connect-agent');
+      if (cb) cb.addEventListener('click', function () { connectorSheet(); });
+    });
   }
 
   // ─── home ────────────────────────────────────────────────────────────────
@@ -337,6 +342,7 @@
         '<button class="btn sm primary" id="build-btn">' + ic('sparkles') + 'Build full docs + Linear</button>' +
         '<button class="btn sm" id="edit-btn">' + ic('edit') + 'Edit &amp; assess</button>' +
         '<button class="btn sm" id="export-btn">' + ic('download') + 'Export / Deploy…</button>' +
+        '<button class="btn sm" id="share-btn">' + ic('nodes') + 'Share with agent</button>' +
         '<button class="btn sm" id="regen">' + ic('refresh') + 'Re-run wizard</button></div></div>' +
         (p.enrichedAt ? '<div class="ok-note">✦ AI-built ' + fmtDate(p.enrichedAt) + (p.linearUrl ? ' · <a href="' + esc(p.linearUrl) + '" target="_blank">Linear project ↗</a>' : '') + '</div>' : '') +
         '<div class="browser"><div class="filetree" id="tree"></div>' +
@@ -345,6 +351,7 @@
       app.querySelector('#export-btn').addEventListener('click', function () { exportSheet(id); });
       app.querySelector('#build-btn').addEventListener('click', function () { buildSheet(id); });
       app.querySelector('#edit-btn').addEventListener('click', function () { editSheet(id, p); });
+      app.querySelector('#share-btn').addEventListener('click', function () { shareSheet(id); });
 
       var tree = app.querySelector('#tree');
       tree.innerHTML = files.map(function (f) {
@@ -696,6 +703,142 @@
         if (j.ok) { note.innerHTML = '✓ Deployed — open <a href="' + esc(j.url) + '" target="_blank">' + esc(j.url) + '</a>'; showOut(j.output); }
         else { note.innerHTML = '✗ ' + esc(j.error || 'deploy failed'); showOut(j.output); }
       }).catch(function (e) { btn.disabled = false; note.textContent = '✗ ' + e.message; });
+    });
+  }
+
+  // ─── agent API: mint keys + paste-in kit ───────────────────────────────────
+  // The LAN-reachable wizard origin (e.g. http://wizard.192.168.1.220.nip.io) so
+  // a key's paste-in kit is reachable from another machine even if this page was
+  // opened on localhost. Falls back to whatever origin we're served on.
+  function wizardLanBase() {
+    return fetch('/api/config').then(function (r) { return r.json(); }).catch(function () { return {}; })
+      .then(function (cfg) {
+        var ip = cfg && cfg.hostIp;
+        if (!ip) {
+          var m = String(location.hostname).match(/(\d+\.\d+\.\d+\.\d+)\.nip\.io$/) ||
+                  String(location.hostname).match(/^(\d+\.\d+\.\d+\.\d+)$/);
+          if (m) ip = m[1];
+        }
+        return ip ? 'http://wizard.' + ip + '.nip.io' : location.origin;
+      });
+  }
+
+  function fallbackCopy(text) { var ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); } catch (e) {} ta.remove(); }
+  function copyText(text, btn) {
+    var orig = btn.textContent;
+    function done() { btn.textContent = 'Copied ✓'; setTimeout(function () { btn.textContent = orig; }, 1400); }
+    if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(text).then(done, function () { fallbackCopy(text); done(); }); }
+    else { fallbackCopy(text); done(); }
+  }
+
+  // Renders the key-minting UI + existing-key list for one project into `body`.
+  // `baseOverride` is the LAN origin baked into the kit so it's reachable off-box.
+  function agentKeyPanel(body, id, baseOverride) {
+    body.innerHTML =
+      '<div class="dform">' +
+        '<div class="row2">' +
+          '<div><label>Access</label><select id="ak-scope"><option value="write">Read + write (edit, deploy, keys)</option><option value="read">Read only</option></select></div>' +
+          '<div><label>Label (optional)</label><input type="text" id="ak-name" placeholder="e.g. build session" /></div>' +
+        '</div>' +
+        '<div style="margin-top:10px"><button class="btn sm primary" id="ak-create">' + ic('sparkles') + 'Create key</button></div>' +
+        '<div id="ak-result" style="display:none;margin-top:14px"></div>' +
+        '<div id="ak-list" style="margin-top:16px"></div>' +
+      '</div>';
+    var result = body.querySelector('#ak-result');
+    var list = body.querySelector('#ak-list');
+
+    function refreshList() {
+      fetch('/api/projects/' + id + '/agent-tokens').then(function (r) { return r.json(); }).then(function (d) {
+        var toks = (d && d.tokens) || [];
+        if (!toks.length) { list.innerHTML = '<div class="hint">No keys yet for this project.</div>'; return; }
+        list.innerHTML = '<div class="hint" style="margin-bottom:6px">Existing keys</div>' + toks.map(function (t) {
+          var state = t.revokedAt ? ' · <span style="color:var(--dim)">revoked</span>' : '';
+          var used = t.lastUsedAt ? ' · last used ' + fmtDate(t.lastUsedAt) : '';
+          return '<div class="exp-opt" style="align-items:center">' +
+            '<div><b>' + esc(t.name) + '</b> <span class="pill ' + (t.scope === 'write' ? 'generated' : 'draft') + '">' + esc(t.scope) + '</span>' +
+            '<div class="hint">' + esc(t.prefix) + ' · created ' + fmtDate(t.createdAt) + used + state + '</div></div>' +
+            (t.revokedAt ? '' : '<button class="btn sm" data-revoke="' + t.id + '">Revoke</button>') +
+          '</div>';
+        }).join('');
+        list.querySelectorAll('[data-revoke]').forEach(function (b) {
+          b.addEventListener('click', function () {
+            if (!confirm('Revoke this key? Any session using it loses access immediately.')) return;
+            fetch('/api/projects/' + id + '/agent-tokens/' + b.getAttribute('data-revoke'), { method: 'DELETE' }).then(function () { refreshList(); });
+          });
+        });
+      });
+    }
+    refreshList();
+
+    body.querySelector('#ak-create').addEventListener('click', function () {
+      var scope = body.querySelector('#ak-scope').value;
+      var name = body.querySelector('#ak-name').value.trim();
+      var btn = this; btn.disabled = true;
+      api('/api/projects/' + id + '/agent-tokens', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ scope: scope, name: name, base: baseOverride || '' }) })
+        .then(function (res) {
+          btn.disabled = false;
+          var j = res.j || {};
+          result.style.display = 'block';
+          if (!res.ok) { result.innerHTML = '<div class="hint" style="color:#c0392b">' + esc(j.error || 'could not create key') + '</div>'; return; }
+          result.innerHTML =
+            '<div class="ok-note">✦ Key created — copy it now. For security the secret is shown <b>only once</b>.</div>' +
+            '<label style="margin-top:10px">Paste this into a new Claude session</label>' +
+            '<pre id="ak-kit" style="white-space:pre-wrap;word-break:break-word;max-height:340px;overflow:auto;background:var(--card,#f6f6f6);padding:10px;border-radius:6px;font-size:12px;line-height:1.45"></pre>' +
+            '<div style="display:flex;gap:8px;margin-top:8px"><button class="btn sm primary" id="ak-copy">Copy for Claude</button>' +
+            '<button class="btn sm" id="ak-copytok">Copy token only</button></div>';
+          result.querySelector('#ak-kit').textContent = j.kit || '';
+          result.querySelector('#ak-copy').addEventListener('click', function () { copyText(j.kit || '', this); });
+          result.querySelector('#ak-copytok').addEventListener('click', function () { copyText(j.token || '', this); });
+          refreshList();
+        }).catch(function (e) { btn.disabled = false; result.style.display = 'block'; result.innerHTML = '<div class="hint">' + esc(e.message) + '</div>'; });
+    });
+  }
+
+  // Per-project: "Share with agent" on the generated-docs page.
+  function shareSheet(id) {
+    var bg = document.createElement('div'); bg.className = 'modal-bg';
+    bg.innerHTML = '<div class="modal exp-modal"><h3>' + ic('nodes') + 'Share this project with a Claude session</h3>' +
+      '<p class="hint">Create a key scoped to <b>this project</b>. Paste the block into another Claude session and it can read the full plan, make edits over the API, pull the deploy/SSH details &amp; API keys, and read every other project on this wizard for cross-app context.</p>' +
+      '<div id="share-base" class="hint" style="margin:4px 0 10px"></div>' +
+      '<div id="share-body"></div>' +
+      '<div class="row"><button class="btn" id="share-close">Close</button></div></div>';
+    document.body.appendChild(bg);
+    bg.addEventListener('click', function (e) { if (e.target === bg) bg.remove(); });
+    bg.querySelector('#share-close').addEventListener('click', function () { bg.remove(); });
+    wizardLanBase().then(function (base) {
+      bg.querySelector('#share-base').innerHTML = 'API base: <code>' + esc(base + '/api/agent') + '</code>';
+      agentKeyPanel(bg.querySelector('#share-body'), id, base);
+    });
+  }
+
+  // Global: "Connect Agent" in the home management bar — pick any project.
+  function connectorSheet() {
+    var bg = document.createElement('div'); bg.className = 'modal-bg';
+    bg.innerHTML = '<div class="modal exp-modal"><h3>' + ic('nodes') + 'Connect a Claude session</h3>' +
+      '<p class="hint">Give another Claude session direct API access to a project on this wizard — read the plan, edit it, pull the connection details (Docker/SSH host, API keys), and see every other project for cross-app architecture context. Connect over your LAN.</p>' +
+      '<div class="dform">' +
+        '<label>Wizard API base (LAN)</label>' +
+        '<div style="display:flex;gap:8px;align-items:center"><code id="conn-base" style="flex:1;padding:8px;background:var(--card,#f6f6f6);border-radius:6px;overflow:auto;white-space:nowrap">…</code><button class="btn sm" id="conn-base-copy">Copy</button></div>' +
+        '<label style="margin-top:12px">Project</label><select id="conn-proj"><option value="">Loading projects…</option></select>' +
+        '<div id="conn-body" style="margin-top:8px"><div class="hint">Pick a project to create a key.</div></div>' +
+      '</div>' +
+      '<div class="row"><button class="btn" id="conn-close">Close</button></div></div>';
+    document.body.appendChild(bg);
+    bg.addEventListener('click', function (e) { if (e.target === bg) bg.remove(); });
+    bg.querySelector('#conn-close').addEventListener('click', function () { bg.remove(); });
+    var baseEl = bg.querySelector('#conn-base');
+    var lanBase = location.origin;
+    wizardLanBase().then(function (base) { lanBase = base; baseEl.textContent = base + '/api/agent'; });
+    bg.querySelector('#conn-base-copy').addEventListener('click', function () { copyText(baseEl.textContent, this); });
+    var sel = bg.querySelector('#conn-proj');
+    fetch('/api/projects').then(function (r) { return r.json(); }).then(function (projects) {
+      if (!projects.length) { sel.innerHTML = '<option value="">No projects yet — create one first</option>'; return; }
+      sel.innerHTML = '<option value="">Select a project…</option>' + projects.map(function (p) { return '<option value="' + p.id + '">' + esc(p.name) + '</option>'; }).join('');
+    });
+    sel.addEventListener('change', function () {
+      var pid = sel.value; var bodyEl = bg.querySelector('#conn-body');
+      if (!pid) { bodyEl.innerHTML = '<div class="hint">Pick a project to create a key.</div>'; return; }
+      agentKeyPanel(bodyEl, pid, lanBase);
     });
   }
 

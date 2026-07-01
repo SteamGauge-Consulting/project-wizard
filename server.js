@@ -24,6 +24,8 @@ const renderIntake = require('./lib/render-intake');
 const enrichLib = require('./lib/enrich');
 const assessLib = require('./lib/assess');
 const linear = require('./lib/linear');
+const agentApi = require('./lib/agent-api');
+const agentTokens = require('./lib/agent-tokens');
 
 const app = express();
 const PORT = process.env.PORT || 4500;
@@ -282,7 +284,7 @@ app.post('/api/projects', (req, res) => {
 app.get('/api/projects/:id', (req, res) => {
   const p = storage.getProject(req.params.id);
   if (!p) return res.status(404).json({ error: 'not found' });
-  res.json(p);
+  res.json(agentTokens.redactProject(p));   // never ship agent-token secret hashes to a client
 });
 
 app.put('/api/projects/:id', (req, res) => {
@@ -964,8 +966,11 @@ app.post('/api/projects/:id/deploy', (req, res) => {
           try { const rr = await fetch(origin + '/api/rerender', { method: 'POST' }); if (rr.ok) { out.push('\n→ re-rendered pod docs from its own intake\n'); break; } } catch (e) {}
         }
       }
-      // Remember where it's live so the homepage card can deep-link to the docs.
+      // Remember where it's live so the homepage card can deep-link to the docs,
+      // and record the SSH deploy target (no password) so the agent API can report
+      // "how to reach the Docker host" and redeploy without re-entering it.
       p.deployUrl = meta.reachUrl; p.deployedAt = new Date().toISOString();
+      p.deployTarget = { host: host, user: user, sshPort: sshPort, hostname: (b.hostname || '').trim() };
       try { storage.saveProject(p); } catch (e) {}
       res.json({ ok: true, url: meta.reachUrl, output: out.join('').slice(-6000) });
     } catch (e) {
@@ -1026,6 +1031,13 @@ app.get('/api/config', (req, res) => {
     aiModel: reverse.MODEL,
     houseDefaults: houseDefaults(),   // org standard stack; seeds new-project decisions + wizard hints
   });
+});
+
+// ─── agent API: token-authed read/edit access for another Claude session ─────
+// Mounts the UI-side token mint/list/revoke routes and the token-authed
+// /api/agent/* surface. See lib/agent-api.js + AGENT-API.md.
+agentApi.mount(app, {
+  storage, intakeOf, summarize, emptyAnswers, walkTree, safeGenPath, PORT,
 });
 
 app.get('/healthz', (req, res) => res.json({ ok: true }));
