@@ -348,7 +348,9 @@
         '<label>Anthropic (Claude) API key &nbsp;' + dot(ig.hasClaude) + '</label><input type="password" id="ig-claude" autocomplete="off" placeholder="' + ph(ig.hasClaude, 'sk-ant-…') + '">' +
         '<label>Grok (xAI) API key &nbsp;<span style="color:#6A6A66;font-size:11px">cross-examiner</span> &nbsp;' + dot(ig.hasGrok) + '</label><input type="password" id="ig-grok" autocomplete="off" placeholder="' + ph(ig.hasGrok, 'xai-…') + '">' +
         '<label>Linear API key &nbsp;' + dot(ig.hasLinearKey) + '</label><input type="password" id="ig-linkey" autocomplete="off" placeholder="' + ph(ig.hasLinearKey, 'lin_api_…') + '">' +
-        '<label>Linear project ID</label><input type="text" id="ig-linproj" value="' + esc(ig.linearProjectId || '') + '" placeholder="the project whose issues Assess/Apply sync">' +
+        '<label>Linear project <span style="color:#6A6A66;font-size:11px">URL or ID — the tracker this plan syncs with</span></label><input type="text" id="ig-linproj" value="' + esc(ig.linearProjectId || '') + '" placeholder="https://linear.app/…/project/…  or the project ID">' +
+        '<div style="margin:8px 0 2px;display:flex;gap:10px;align-items:center;flex-wrap:wrap"><button class="pwe-btn" id="ig-linklink">Link Linear &amp; update plan</button><span class="pwe-status" id="ig-linkst"></span></div>' +
+        '<p class="pwe-hint" style="margin:2px 0 0">Pulls that project\'s milestones + issues and rewrites the Plan page with them. Use it to link a tracker for the first time or point the plan at a different project.</p>' +
         '<label>GitHub repo URL</label><input type="text" id="ig-ghrepo" value="' + esc(ig.githubRepoUrl || '') + '" placeholder="https://github.com/org/repo">' +
         '<label>GitHub token &nbsp;' + dot(ig.hasGithubToken) + '</label><input type="password" id="ig-ghtok" autocomplete="off" placeholder="' + ph(ig.hasGithubToken, 'ghp_…') + '">' +
         '<div class="pwe-sub" style="margin:16px 0 2px;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#6A6A66">Deploy host (SSH) — for Claude Code to stand up / update the pod</div>' +
@@ -385,6 +387,21 @@
           renderIntegrations();   // refresh status dots + clear the password fields
           body.querySelector('#ig-st').style.color = '#97C459';
           body.querySelector('#ig-st').textContent = '✓ saved — applies to Assess/Apply now';
+        }).catch(function (e) { btn.disabled = false; st.style.color = '#E0A848'; st.textContent = '✗ ' + e.message; });
+      });
+      // Link / re-link the Linear project, then re-render the Plan page with its issues.
+      body.querySelector('#ig-linklink').addEventListener('click', function () {
+        var st = body.querySelector('#ig-linkst'); var btn = this;
+        var payload = { linearKey: body.querySelector('#ig-linkey').value, linearProjectUrl: body.querySelector('#ig-linproj').value };
+        if (!payload.linearProjectUrl.trim()) { st.style.color = '#E0A848'; st.textContent = 'Enter a Linear project URL or ID first.'; return; }
+        btn.disabled = true; st.style.color = ''; st.innerHTML = '<span class="pwe-spin"></span>Linking + pulling issues…';
+        api('/api/integrations/link-linear', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) }).then(function (res) {
+          btn.disabled = false;
+          if (!res.ok || !res.j.ok) { st.style.color = '#E0A848'; st.textContent = '✗ ' + ((res.j && res.j.error) || 'link failed'); return; }
+          var c = res.j.counts || {};
+          caps.integrations = res.j.integrations; caps.hasLinear = true;
+          st.style.color = '#97C459';
+          st.innerHTML = '✓ Linked — Plan updated' + (c.issues != null ? ' with ' + c.issues + ' issue(s) across ' + (c.phases || 0) + ' phase(s)' : '') + '. <a href="/" style="color:#97C459">Open plan ↗</a>';
         }).catch(function (e) { btn.disabled = false; st.style.color = '#E0A848'; st.textContent = '✗ ' + e.message; });
       });
     }
