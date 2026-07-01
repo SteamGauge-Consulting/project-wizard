@@ -783,7 +783,7 @@
           result.innerHTML =
             '<div class="ok-note">✦ Key created — copy it now. For security the secret is shown <b>only once</b>.</div>' +
             '<label style="margin-top:10px">Paste this into a new Claude session</label>' +
-            '<pre id="ak-kit" style="white-space:pre-wrap;word-break:break-word;max-height:340px;overflow:auto;background:var(--card,#f6f6f6);padding:10px;border-radius:6px;font-size:12px;line-height:1.45"></pre>' +
+            '<pre id="ak-kit" style="white-space:pre-wrap;word-break:break-word;max-height:340px;overflow:auto;background:var(--code);color:var(--text);border:1px solid var(--line);padding:10px;border-radius:6px;font-size:12px;line-height:1.45"></pre>' +
             '<div style="display:flex;gap:8px;margin-top:8px"><button class="btn sm primary" id="ak-copy">Copy for Claude</button>' +
             '<button class="btn sm" id="ak-copytok">Copy token only</button></div>';
           result.querySelector('#ak-kit').textContent = j.kit || '';
@@ -818,7 +818,7 @@
       '<p class="hint">Give another Claude session direct API access to a project on this wizard — read the plan, edit it, pull the connection details (Docker/SSH host, API keys), and see every other project for cross-app architecture context. Connect over your LAN.</p>' +
       '<div class="dform">' +
         '<label>Wizard API base (LAN)</label>' +
-        '<div style="display:flex;gap:8px;align-items:center"><code id="conn-base" style="flex:1;padding:8px;background:var(--card,#f6f6f6);border-radius:6px;overflow:auto;white-space:nowrap">…</code><button class="btn sm" id="conn-base-copy">Copy</button></div>' +
+        '<div style="display:flex;gap:8px;align-items:center"><code id="conn-base" style="flex:1;padding:8px;background:var(--code);color:var(--text);border:1px solid var(--line);border-radius:6px;overflow:auto;white-space:nowrap">…</code><button class="btn sm" id="conn-base-copy">Copy</button></div>' +
         '<label style="margin-top:12px">Project</label><select id="conn-proj"><option value="">Loading projects…</option></select>' +
         '<div id="conn-body" style="margin-top:8px"><div class="hint">Pick a project to create a key.</div></div>' +
       '</div>' +
