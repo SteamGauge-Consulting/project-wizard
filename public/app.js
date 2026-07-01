@@ -56,7 +56,9 @@
     return (links.portainer ? '<a class="btn sm ghost" target="_blank" href="' + esc(links.portainer) + '" title="Portainer — container management">' + ic('box') + 'Containers</a>' : '') +
            (links.proxy ? '<a class="btn sm ghost" target="_blank" href="' + esc(links.proxy) + '" title="Traefik — reverse-proxy dashboard">' + ic('nodes') + 'Proxy</a>' : '') +
            // Always available: hand another Claude session API access to a project.
-           '<button class="btn sm ghost" id="connect-agent" title="Give a Claude session API access to a project">' + ic('sparkles') + 'Connect Agent</button>';
+           '<button class="btn sm ghost" id="connect-agent" title="Give a Claude session API access to a project">' + ic('sparkles') + 'Connect Agent</button>' +
+           // Update this wizard + every deployed app to the latest main.
+           '<button class="btn sm ghost" id="update-all" title="Update the wizard and all deployed apps to the latest code">' + ic('refresh') + 'Update</button>';
   }
   function fillMgmt() {
     var slot = app.querySelector('#mgmt-links');
@@ -65,6 +67,8 @@
       slot.innerHTML = mgmtBarHtml(links);
       var cb = slot.querySelector('#connect-agent');
       if (cb) cb.addEventListener('click', function () { connectorSheet(); });
+      var ub = slot.querySelector('#update-all');
+      if (ub) ub.addEventListener('click', function () { updateSheet(); });
     });
   }
 
@@ -832,6 +836,50 @@
     wizardLanBase().then(function (base) {
       bg.querySelector('#share-base').innerHTML = 'API base: <code>' + esc(base + '/api/agent') + '</code>';
       agentKeyPanel(bg.querySelector('#share-body'), id, base);
+    });
+  }
+
+  // Global: "Update" — pull latest main and rebuild the wizard + redeploy every
+  // deployed app. The wizard restarts itself, so we poll /api/version for the new
+  // build to confirm it came back.
+  function updateSheet() {
+    var bg = document.createElement('div'); bg.className = 'modal-bg';
+    bg.innerHTML = '<div class="modal"><h3>' + ic('refresh') + 'Update to latest</h3>' +
+      '<p class="hint">Pulls the latest <b>main</b> and updates <b>this wizard</b> plus every deployed app (data-preserving). The wizard rebuilds itself, so this page will be briefly unreachable (~30–60s) before it returns on the new version.</p>' +
+      '<label>Host SSH login <span style="text-transform:none;letter-spacing:0;color:var(--dim)">(user the wizard runs as on its host)</span></label>' +
+      '<input type="text" id="up-user" placeholder="blank = server default (e.g. docker); set to e.g. sgcadmin if different" />' +
+      '<label style="margin-top:10px">Host SSH password <span style="text-transform:none;letter-spacing:0;color:var(--dim)">(only if key auth isn’t set up)</span></label>' +
+      '<input type="password" id="up-pass" placeholder="leave blank to use the wizard’s mounted SSH key" />' +
+      '<div id="up-note" class="hint" style="margin-top:12px"></div>' +
+      '<div class="row"><button class="btn ghost" id="up-cancel">Cancel</button><button class="btn primary" id="up-go">' + ic('refresh') + 'Update now</button></div></div>';
+    document.body.appendChild(bg);
+    var note = bg.querySelector('#up-note');
+    function close() { bg.remove(); }
+    bg.querySelector('#up-cancel').addEventListener('click', close);
+    bg.addEventListener('click', function (e) { if (e.target === bg) close(); });
+    bg.querySelector('#up-go').addEventListener('click', function () {
+      var btn = this; btn.disabled = true;
+      var pass = bg.querySelector('#up-pass').value;
+      var uphuser = bg.querySelector('#up-user').value.trim();
+      note.style.color = ''; note.textContent = 'Starting update on the host…';
+      api('/api/self-update', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ user: uphuser, password: pass }) }).then(function (res) {
+        var j = res.j || {};
+        if (!res.ok) { btn.disabled = false; note.innerHTML = '<span style="color:var(--red)">✗ ' + esc(j.error || 'update failed') + '</span>' + (j.hint ? '<div class="hint" style="margin-top:6px">' + esc(j.hint) + '</div>' : ''); return; }
+        note.innerHTML = '✓ Update started. The wizard is rebuilding — this page will drop for ~30–60s, then come back on the new version. Waiting…';
+        // Poll /api/version; when it changes (or first returns after the outage), we're back.
+        var startV = null, tries = 0;
+        fetch('/api/version', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (v) { startV = v && v.version; }).catch(function () {});
+        var iv = setInterval(function () {
+          tries++;
+          fetch('/api/version', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (v) {
+            if (v && v.version && (!startV || v.version !== startV)) {
+              clearInterval(iv);
+              note.innerHTML = '✓ Wizard is back on <b>' + esc(v.version) + '</b>. Deployed apps are redeploying in the background. <button class="btn sm primary" id="up-reload">Reload</button>';
+              var rb = bg.querySelector('#up-reload'); if (rb) rb.addEventListener('click', function () { location.reload(); });
+            } else if (tries > 75) { clearInterval(iv); note.innerHTML = 'Still updating — give it another minute, then reload the page.'; }
+          }).catch(function () { /* wizard down mid-rebuild — expected, keep polling */ });
+        }, 4000);
+      }).catch(function (e) { btn.disabled = false; note.style.color = 'var(--red)'; note.textContent = '✗ ' + e.message; });
     });
   }
 
