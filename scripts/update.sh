@@ -28,7 +28,10 @@ echo "→ rebuilding + restarting container"
 # Stamp the build with the git short SHA so the wizard (and the pods it deploys)
 # can show which version is running.
 export BUILD_VERSION="$(git rev-parse --short HEAD)"
-docker compose up -d --build
+# --force-recreate so the container always restarts with the new BUILD_VERSION,
+# even when the rebuilt image is cache-identical (otherwise the running container
+# keeps reporting the version it first booted with).
+docker compose up -d --build --force-recreate
 docker image prune -f >/dev/null 2>&1 || true
 
 echo "✓ updated to $BUILD_VERSION on $BRANCH"
