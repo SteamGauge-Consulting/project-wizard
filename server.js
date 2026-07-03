@@ -786,6 +786,7 @@ app.post('/api/projects/:id/apply-changes', async (req, res) => {
   // 1. Merge accepted DOC sections into the project's answers (reverted sections
   //    keep their baseline values). Tables/scalars copied wholesale per section.
   p.answers = p.answers || emptyAnswers();
+  const beforeMilestones = JSON.parse(JSON.stringify((p.answers && p.answers.milestones) || []));
   for (const u of acceptedUnits) {
     if (u.group !== 'doc') continue;
     if (u.section === 'product') {
@@ -795,6 +796,20 @@ app.post('/api/projects/:id/apply-changes', async (req, res) => {
       p.answers[u.section] = proposed[u.section];
     }
     applied.docSections.push(u.section);
+  }
+
+  // 1b. Milestone edits propagate to the tracker: renaming a milestone row
+  //     renames the Linear project milestone and its "Phase X — …" parent
+  //     issues, so tracker names never drift from the docs.
+  {
+    const lk = (b.linearKey && String(b.linearKey).trim()) || '';
+    if (lk && p.linearProjectId && applied.docSections.indexOf('milestones') !== -1) {
+      try {
+        const ms = await linear.syncMilestoneEdits(lk, p.linearProjectId, beforeMilestones, (p.answers.milestones || []), (p.answers.startDate || ''));
+        ms.renamed.forEach((r) => applied.linear.push({ action: 'rename-milestone', title: r.from + ' → ' + r.to }));
+        ms.skipped.forEach((s) => errors.push('milestone "' + s + '": no matching Linear milestone to rename'));
+      } catch (e) { errors.push('milestone sync: ' + e.message); }
+    }
   }
 
   // 2. Re-render the docs from the merged intake. Re-enrich when a Claude key is
