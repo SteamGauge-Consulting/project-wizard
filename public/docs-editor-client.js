@@ -241,6 +241,12 @@
     var code = el('<button>Export / code</button>');
     code.addEventListener('click', function () { m.remove(); openBrowse(); });
     m.appendChild(code);
+    var sync = el('<button>Sync from Linear</button>');
+    sync.addEventListener('click', function () {
+      sync.disabled = true; sync.textContent = 'Syncing…';
+      api('/api/rerender', { method: 'POST' }).then(function () { location.reload(); }).catch(function () { location.reload(); });
+    });
+    m.appendChild(sync);
     var upd = el('<button>Update app</button>');
     upd.addEventListener('click', function () { m.remove(); openUpdateApp(); });
     m.appendChild(upd);
