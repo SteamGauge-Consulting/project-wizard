@@ -187,15 +187,24 @@
   function mountNav() {
     var nav = document.querySelector('nav.docs-nav');
     if (!nav) return;
-    api('/api/version').then(function (r) { if (r.ok && r.j) buildVersion = r.j.version || ''; }).catch(function () {});
     var appLink = nav.querySelector('a.nav-app') || nav.querySelector('a[href="/"]'); // the "← App" link
+    api('/api/version').then(function (r) {
+      if (!r.ok || !r.j) return;
+      buildVersion = r.j.version || '';
+      // Authoritative "← App" target: the wizard URL baked into the pod at
+      // deploy. The hostname heuristic below can't work for IP-addressed pods.
+      if (appLink && r.j.wizardUrl) appLink.href = r.j.wizardUrl + '/';
+    }).catch(function () {});
 
-    // "← App" returns to the project-wizard homepage (project tiles), derived from
-    // THIS pod's hostname — the wizard is at wizard.<same-base-domain> as the pod.
+    // Fallback while /api/version loads (or on pods deployed before wizardUrl
+    // was baked): the wizard is at wizard.<same-base-domain>. Only meaningful
+    // for NAMED hosts — a raw-IP pod (192.168.1.220) must keep the baked href;
+    // swapping its first octet made a bogus host the browser blocks.
     if (appLink) {
       try {
         var parts = location.hostname.split('.');
-        if (parts.length > 1 && parts[0] !== 'wizard') {
+        var isIp = /^\d+(\.\d+)*$/.test(location.hostname);
+        if (!isIp && parts.length > 2 && parts[0] !== 'wizard') {
           parts[0] = 'wizard';
           appLink.href = location.protocol + '//' + parts.join('.') + (location.port ? ':' + location.port : '') + '/';
         }

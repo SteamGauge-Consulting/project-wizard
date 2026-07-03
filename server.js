@@ -71,11 +71,28 @@ const emptyAnswers = () => ({
 
 // The wizard's own base URL, from the incoming request — used to bake an
 // "✎ Edit in wizard" deep-link into the deployed docs (the living-docs round-trip).
+// The wizard's reachable origin, for URLs baked into pods (WIZARD_URL, the
+// "← App" nav link, edit deep-links). Requests from a browser carry the real
+// LAN origin — remember it — because internally-triggered work (update-apps →
+// localhost deploy) only sees a loopback host, which is useless to a pod or a
+// browser on another machine.
+const WIZ_ORIGIN_FILE = path.join(DATA_ROOT, 'wizard-origin.json');
+const LOOPBACK_RE = /^https?:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0|\[?::1\]?)(:\d+)?$/i;
+function publicWizardOrigin(req) {
+  const host = req && req.headers && req.headers.host;
+  const proto = host ? String((req.headers['x-forwarded-proto'] || req.protocol || 'http')).split(',')[0].trim() : 'http';
+  const seen = host ? proto + '://' + host : '';
+  if (seen && !LOOPBACK_RE.test(seen)) {
+    try { fs.mkdirSync(DATA_ROOT, { recursive: true }); fs.writeFileSync(WIZ_ORIGIN_FILE, JSON.stringify({ origin: seen }) + '\n'); } catch (e) {}
+    return seen;
+  }
+  try { const s = JSON.parse(fs.readFileSync(WIZ_ORIGIN_FILE, 'utf8')); if (s && s.origin) return s.origin; } catch (e) {}
+  return seen;
+}
+
 function wizardEditUrl(req, id) {
-  const host = req.headers && req.headers.host;
-  if (!host) return '';
-  const proto = (req.headers['x-forwarded-proto'] || req.protocol || 'http').split(',')[0].trim();
-  return proto + '://' + host + '/#/p/' + id + '/docs';
+  const origin = publicWizardOrigin(req);
+  return origin ? origin + '/#/p/' + id + '/docs' : '';
 }
 
 function summarize(p) {
@@ -926,7 +943,7 @@ app.post('/api/projects/:id/deploy', (req, res) => {
   // on the target). On a key-only server, leave the password blank.
   const usePassword = !!(b.password && String(b.password).trim());
 
-  const wizardUrl = (req.protocol || 'http') + '://' + req.get('host');
+  const wizardUrl = publicWizardOrigin(req);
   const params = { name: b.name || p.name, host: b.host, sshUser: b.user, sshPort: b.sshPort, port: b.port, hostname: b.hostname, linearKey: b.linearKey, anthropicKey: b.apiKey, linearProjectId: b.linearProjectId || p.linearProjectId, wizardUrl: wizardUrl, wizardProjectId: p.id, buildVersion: (process.env.BUILD_VERSION || 'dev') };
   const name = deployBundle.slugify(params.name);
   const user = (b.user || 'docker').trim();
