@@ -973,6 +973,13 @@ app.post('/api/projects/:id/deploy', (req, res) => {
   let stage;
   try { stage = stageDeploy(dir, params); }
   catch (e) { return res.status(500).json({ ok: false, error: 'stage failed: ' + String(e.message || e) }); }
+  // The bundle must carry the enrichment cache — the pod's re-renders need it,
+  // or every AI-enriched section (architecture diagram, request flows, ACs)
+  // silently degrades to the deterministic fallback.
+  try {
+    const se = path.join(stage, '.deploy', 'enrich.json');
+    if (!fs.existsSync(se) && p.lastEnrich) { fs.mkdirSync(path.dirname(se), { recursive: true }); fs.writeFileSync(se, JSON.stringify(p.lastEnrich)); }
+  } catch (e) { /* best-effort */ }
 
   const out = [];
   const run = (cmd, args) => new Promise((resolve, reject) => {
@@ -995,7 +1002,12 @@ app.post('/api/projects/:id/deploy', (req, res) => {
       // templates apply to ITS content rather than the wizard's.
       let existing = false;
       try { await runRemote('ssh', [...sshArgs, target, 'test -f ~/apps/' + name + '/PLAN-INTAKE.json']); existing = true; } catch (e) {}
-      const preserve = existing ? ['--exclude', 'PLAN-INTAKE.json', '--exclude', '.deploy/enrich.json'] : [];
+      // Preserve the pod's enrichment cache only if it actually HAS one — a pod
+      // missing enrich.json (older deploys never shipped it) must receive the
+      // wizard's copy, or its re-renders lose the architecture diagram + flows.
+      let podHasEnrich = false;
+      if (existing) { try { await runRemote('ssh', [...sshArgs, target, 'test -s ~/apps/' + name + '/.deploy/enrich.json']); podHasEnrich = true; } catch (e) {} }
+      const preserve = existing ? ['--exclude', 'PLAN-INTAKE.json', ...(podHasEnrich ? ['--exclude', '.deploy/enrich.json'] : [])] : [];
       await runRemote('rsync', ['-az', '--delete', '-e', sshCmdStr,
         '--exclude', 'node_modules', '--exclude', '.git', '--exclude', '_static', '--exclude', 'deploy.sh',
         // Always preserve host-side runtime state across redeploys: the integration
