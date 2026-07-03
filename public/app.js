@@ -443,48 +443,74 @@
         }).catch(function (e) { status.textContent = '✗ ' + e.message; });
     });
 
-    bg.querySelector('#b-go').addEventListener('click', function () {
+    // ── build progress watcher — sheet-scoped so a REOPENED sheet reattaches to
+    //    a build already running server-side instead of starting a duplicate ──
+    var goBtn = bg.querySelector('#b-go');
+    var progEl = bg.querySelector('#b-prog');
+    var stopBtn = bg.querySelector('#b-stop');
+    var fmtK = function (n) { return Math.round((n || 0) / 1000) + 'K'; };
+    var renderProgress = function (pg) {
+      if (!pg) return;
+      status.textContent = '';
+      progEl.style.display = 'block';
+      var rows = [];
+      var dot = pg.agentRunning
+        ? '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#97C459;margin-right:7px;animation:pw-pulse 1s infinite;vertical-align:1px"></span>'
+        : '<span style="color:#6A6A66;margin-right:7px">•</span>';
+      var live = pg.liveTokens ? ' <span style="color:#6A6A66">· ' + fmtK(pg.liveTokens.fresh) + ' fresh / ' + fmtK(pg.liveTokens.cached) + ' cached / ' + fmtK(pg.liveTokens.output) + ' out</span>' : '';
+      rows.push('<div style="color:#E8E8E4;margin-bottom:8px">' + dot + esc(pg.current || pg.phase || '') + live + '</div>');
+      (pg.steps || []).forEach(function (s) {
+        var tk = s.tokens ? '<span style="color:#6A6A66;font-family:ui-monospace,Menlo,monospace;font-size:11px;white-space:nowrap">' + fmtK(s.tokens.fresh) + ' / ' + fmtK(s.tokens.cached) + ' / ' + fmtK(s.tokens.output) + '</span>' : '';
+        rows.push('<div style="display:flex;justify-content:space-between;gap:12px;color:#9A9A95;padding:2px 0"><span>✓ ' + esc(s.label) + (s.note ? ' <span style="color:#6A6A66">(' + esc(s.note) + ')</span>' : '') + '</span>' + tk + '</div>');
+      });
+      var t = pg.totals || {};
+      if (t.fresh || t.cached || t.output) rows.push('<div style="margin-top:8px;border-top:1px solid var(--line);padding-top:6px;color:#6A6A66;font-size:11px">totals: <b style="color:#9A9A95">' + fmtK(t.fresh) + '</b> fresh · <b style="color:#9A9A95">' + fmtK(t.cached) + '</b> cached · <b style="color:#9A9A95">' + fmtK(t.output) + '</b> out  <span style="color:#4a4a52">(fresh billed full, cached ~10%)</span></div>');
+      progEl.innerHTML = rows.join('');
+    };
+    var poll = null;
+    function stopWatch() { if (poll) clearInterval(poll); poll = null; stopBtn.style.display = 'none'; }
+    function startWatch(onDone) {
+      stopBtn.style.display = ''; stopBtn.disabled = false; stopBtn.textContent = '■ Stop';
+      stopBtn.onclick = function () { stopBtn.disabled = true; stopBtn.textContent = '■ Stopping…'; api('/api/projects/' + id + '/build-cancel', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).catch(function () {}); };
+      if (poll) clearInterval(poll);
+      poll = setInterval(function () {
+        fetch('/api/projects/' + id + '/build-progress').then(function (r) { return r.json(); }).then(function (pg) {
+          if (!pg) return;
+          if (!pg.done) { renderProgress(pg); return; }
+          stopWatch();
+          if (onDone) onDone(pg);
+        }).catch(function () {});
+      }, 1500);
+    }
+    function reattach() {
+      goBtn.disabled = true;
+      startWatch(function (pg) {
+        renderProgress(pg);
+        goBtn.disabled = false;
+        status.style.color = pg.error ? 'var(--red)' : '';
+        status.textContent = pg.error ? '✗ ' + pg.error
+          : (pg.cancelled ? '■ Build cancelled.' : '✓ Build finished — docs updated in the wizard; Export / Deploy to push live.');
+      });
+    }
+    // A build may already be running (e.g. this sheet was closed mid-build) —
+    // reattach to its live progress instead of allowing a duplicate start.
+    api('/api/projects/' + id + '/build-progress').then(function (r) {
+      if (r.ok && r.j && !r.j.done) { renderProgress(r.j); reattach(); }
+    }).catch(function () {});
+
+    goBtn.addEventListener('click', function () {
       var btn = this; var key = bg.querySelector('#b-ai').value.trim();
       var linKey = bg.querySelector('#b-lin').value.trim(), teamId = linkedTracker ? '' : sel.value;
       try { if (bg.querySelector('#b-remember').checked && key) localStorage.setItem(KEY_LS, key); else localStorage.removeItem(KEY_LS); } catch (e) {}
       btn.disabled = true;
       status.style.color = '';
       status.textContent = 'starting… (this build explores your code with an agent — it can take several minutes)';
-      // The build emits structured phase events; poll them and render the live phase,
-      // an "agent running" indicator, per-phase token counts, and running totals.
-      var progEl = bg.querySelector('#b-prog');
-      var fmtK = function (n) { return Math.round((n || 0) / 1000) + 'K'; };
-      var renderProgress = function (pg) {
-        if (!pg) return;
-        status.textContent = '';
-        progEl.style.display = 'block';
-        var rows = [];
-        var dot = pg.agentRunning
-          ? '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#97C459;margin-right:7px;animation:pw-pulse 1s infinite;vertical-align:1px"></span>'
-          : '<span style="color:#6A6A66;margin-right:7px">•</span>';
-        var live = pg.liveTokens ? ' <span style="color:#6A6A66">· ' + fmtK(pg.liveTokens.fresh) + ' fresh / ' + fmtK(pg.liveTokens.cached) + ' cached / ' + fmtK(pg.liveTokens.output) + ' out</span>' : '';
-        rows.push('<div style="color:#E8E8E4;margin-bottom:8px">' + dot + esc(pg.current || pg.phase || '') + live + '</div>');
-        (pg.steps || []).forEach(function (s) {
-          var tk = s.tokens ? '<span style="color:#6A6A66;font-family:ui-monospace,Menlo,monospace;font-size:11px;white-space:nowrap">' + fmtK(s.tokens.fresh) + ' / ' + fmtK(s.tokens.cached) + ' / ' + fmtK(s.tokens.output) + '</span>' : '';
-          rows.push('<div style="display:flex;justify-content:space-between;gap:12px;color:#9A9A95;padding:2px 0"><span>✓ ' + esc(s.label) + (s.note ? ' <span style="color:#6A6A66">(' + esc(s.note) + ')</span>' : '') + '</span>' + tk + '</div>');
-        });
-        var t = pg.totals || {};
-        if (t.fresh || t.cached || t.output) rows.push('<div style="margin-top:8px;border-top:1px solid var(--line);padding-top:6px;color:#6A6A66;font-size:11px">totals: <b style="color:#9A9A95">' + fmtK(t.fresh) + '</b> fresh · <b style="color:#9A9A95">' + fmtK(t.cached) + '</b> cached · <b style="color:#9A9A95">' + fmtK(t.output) + '</b> out  <span style="color:#4a4a52">(fresh billed full, cached ~10%)</span></div>');
-        progEl.innerHTML = rows.join('');
-      };
-      var stopBtn = bg.querySelector('#b-stop');
-      stopBtn.style.display = ''; stopBtn.disabled = false; stopBtn.textContent = '■ Stop';
-      stopBtn.onclick = function () { stopBtn.disabled = true; stopBtn.textContent = '■ Stopping…'; api('/api/projects/' + id + '/build-cancel', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).catch(function () {}); };
-      var poll = setInterval(function () {
-        fetch('/api/projects/' + id + '/build-progress').then(function (r) { return r.json(); }).then(function (pg) {
-          if (pg && !pg.done) renderProgress(pg);
-        }).catch(function () {});
-      }, 1500);
-      var stopPoll = function () { clearInterval(poll); stopBtn.style.display = 'none'; };
+      startWatch(null);
       api('/api/projects/' + id + '/build-full', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ apiKey: key, linearKey: linKey, teamId: teamId }) })
         .then(function (res) {
-          stopPoll(); btn.disabled = false;
           var j = res.j || {};
+          if (!res.ok && j.running) { reattach(); return; }   // 409 — build already in flight
+          stopWatch(); btn.disabled = false;
           if (j && j.cancelled) { status.style.color = ''; status.textContent = '■ Build cancelled — nothing was written.'; progEl.style.display = 'none'; return; }
           if (!res.ok) { status.style.color = 'var(--red)'; status.textContent = '✗ ' + (j.error || 'failed'); return; }
           var msg = 'Docs rebuilt in the wizard';
@@ -493,7 +519,7 @@
           if (j.cohesion) msg += ' · cohesion +' + j.cohesion.added + '/−' + j.cohesion.removed;
           toast(msg + ' — now Export / Deploy to push it live');
           bg.remove(); docs(id);
-        }).catch(function (e) { stopPoll(); btn.disabled = false; status.style.color = 'var(--red)'; status.textContent = '✗ ' + e.message; });
+        }).catch(function (e) { stopWatch(); btn.disabled = false; status.style.color = 'var(--red)'; status.textContent = '✗ ' + e.message; });
     });
   }
 

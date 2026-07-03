@@ -547,6 +547,15 @@ app.post('/api/projects/:id/build-full', async (req, res) => {
   const out = { ok: true };
   let plan = null, enrich = null, lr = null;
 
+  // One build at a time per project — a second start would run a parallel
+  // duplicate (double AI spend, racing writes into the same generated tree)
+  // and orphan the first run's progress view. The UI resumes the running
+  // build's progress on 409 instead.
+  const inFlight = buildProgress[p.id];
+  if (inFlight && !inFlight.done) {
+    return res.status(409).json({ error: 'a build is already running for this project', running: true });
+  }
+
   // Progress sink — the AI emits structured phase events; the UI polls /build-progress
   // and renders the current phase, a live "agent running" indicator, per-phase token
   // counts, and running totals.
