@@ -283,7 +283,6 @@
     var head = el('<div class="pwe-head"><h2></h2><button class="pwe-x" title="Close">×</button></div>');
     head.querySelector('h2').textContent = title;
     head.querySelector('.pwe-x').addEventListener('click', function () { bg.remove(); });
-    bg.addEventListener('click', function (e) { if (e.target === bg) bg.remove(); });
     mod.appendChild(head); bg.appendChild(mod); document.body.appendChild(bg);
     return { bg: bg, mod: mod, head: head, close: function () { bg.remove(); } };
   }

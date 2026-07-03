@@ -149,9 +149,7 @@
     document.body.appendChild(bg);
     var input = bg.querySelector('#np-name'); input.focus();
     function close() { bg.remove(); }
-    bg.querySelector('#np-cancel').addEventListener('click', close);
-    bg.addEventListener('click', function (e) { if (e.target === bg) close(); });
-    function create(dest) {
+    bg.querySelector('#np-cancel').addEventListener('click', close);    function create(dest) {
       var name = input.value.trim();
       api('/api/projects', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: name }) })
         .then(function (res) { close(); location.hash = '#/p/' + res.j.id + '/' + dest; });
@@ -411,9 +409,7 @@
         '<div id="b-prog" style="display:none;margin-top:12px;border-top:1px solid var(--line);padding-top:10px;font-size:12.5px;max-height:340px;overflow:auto"></div>' +
       '</div>' +
       '<div class="row"><button class="btn" id="b-close">Close</button></div></div>';
-    document.body.appendChild(bg);
-    bg.addEventListener('click', function (e) { if (e.target === bg) bg.remove(); });
-    bg.querySelector('#b-close').addEventListener('click', function () { bg.remove(); });
+    document.body.appendChild(bg);    bg.querySelector('#b-close').addEventListener('click', function () { bg.remove(); });
     var status = bg.querySelector('#b-status'), sel = bg.querySelector('#b-team');
 
     // Already linked to a Linear project? Say so, drop the team picker (it's
@@ -691,9 +687,7 @@
           '<pre id="d-out"></pre>' +
         '</div></div>' +
       '<div class="row"><button class="btn" id="exp-close">Close</button></div></div>';
-    document.body.appendChild(bg);
-    bg.addEventListener('click', function (e) { if (e.target === bg) bg.remove(); });
-    bg.querySelector('#exp-close').addEventListener('click', function () { bg.remove(); });
+    document.body.appendChild(bg);    bg.querySelector('#exp-close').addEventListener('click', function () { bg.remove(); });
     var note = bg.querySelector('#d-note'), outEl = bg.querySelector('#d-out');
     function vals() {
       return {
@@ -848,9 +842,7 @@
       '<div id="share-base" class="hint" style="margin:4px 0 10px"></div>' +
       '<div id="share-body"></div>' +
       '<div class="row"><button class="btn" id="share-close">Close</button></div></div>';
-    document.body.appendChild(bg);
-    bg.addEventListener('click', function (e) { if (e.target === bg) bg.remove(); });
-    bg.querySelector('#share-close').addEventListener('click', function () { bg.remove(); });
+    document.body.appendChild(bg);    bg.querySelector('#share-close').addEventListener('click', function () { bg.remove(); });
     wizardLanBase().then(function (base) {
       bg.querySelector('#share-base').innerHTML = 'API base: <code>' + esc(base + '/api/agent') + '</code>';
       agentKeyPanel(bg.querySelector('#share-body'), id, base);
@@ -874,8 +866,6 @@
     var goBtn = bg.querySelector('#up-go');
     function close() { bg.remove(); }
     bg.querySelector('#up-cancel').addEventListener('click', close);
-    bg.addEventListener('click', function (e) { if (e.target === bg) close(); });
-
     var editing = false;
     function renderCreds() {
       fetch('/api/self-update/creds').then(function (r) { return r.json(); }).then(function (c) {
@@ -962,9 +952,7 @@
         '<div id="conn-result" style="display:none;margin-top:14px"></div>' +
       '</div>' +
       '<div class="row"><button class="btn" id="conn-close">Close</button></div></div>';
-    document.body.appendChild(bg);
-    bg.addEventListener('click', function (e) { if (e.target === bg) bg.remove(); });
-    bg.querySelector('#conn-close').addEventListener('click', function () { bg.remove(); });
+    document.body.appendChild(bg);    bg.querySelector('#conn-close').addEventListener('click', function () { bg.remove(); });
 
     var baseEl = bg.querySelector('#conn-base');
     var lanBase = location.origin;
