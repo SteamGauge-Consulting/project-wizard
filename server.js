@@ -608,23 +608,36 @@ app.post('/api/projects/:id/build-full', async (req, res) => {
   if (checkCancel()) { cancelledBuilds.delete(p.id); prog.current = 'Cancelled — nothing was written'; prog.done = true; prog.cancelled = true; return res.json({ ok: false, cancelled: true }); }
 
   // 2. Optional Linear tracker. Runs BEFORE the render so the Plan page can mirror
-  //    the live tracker (milestone roll-up + per-phase issue overview + live
-  //    status). Two modes: pull an EXISTING project read-only (linearProjectId),
-  //    or create a brand-new one (teamId). Existing-pull never writes.
+  //    the live tracker (milestone roll-up + per-issue overview + live status).
+  //    Re-running the build must NEVER wipe or duplicate a live tracker: when
+  //    this project is already linked to a Linear project that has issues, it is
+  //    re-linked READ-ONLY (issues change only via per-issue change requests).
+  //    A tracker is created only from a blank slate — no linked project, or a
+  //    linked one with ZERO issues — and only when a team was chosen.
   const linearKey = (b.linearKey && String(b.linearKey).trim()) || '';
-  const existingProjectId = (b.linearProjectId && String(b.linearProjectId).trim()) || '';
+  const existingProjectId = (b.linearProjectId && String(b.linearProjectId).trim()) || (p.linearProjectId && String(p.linearProjectId).trim()) || '';
+  let linearSettled = false;
   if (linearKey && existingProjectId) {
     try {
-      onProgress('Linking existing Linear tracker');
-      lr = await linear.loadProjectStructure(linearKey, existingProjectId);  // read-only
-      out.linear = lr; out.linearMode = 'existing';
-      p.linear = lr;
-      p.linearUrl = lr.url;
-      p.linearProjectId = lr.projectId;
+      onProgress('Checking the linked Linear tracker');
+      const probe = await linear.loadProjectStructure(linearKey, existingProjectId);  // read-only
+      const total = (probe.counts && (probe.counts.totalIssues != null ? probe.counts.totalIssues : probe.counts.issues)) || 0;
+      if (total > 0) {
+        lr = probe; out.linear = lr; out.linearMode = 'existing';
+        p.linear = lr;
+        p.linearUrl = lr.url;
+        p.linearProjectId = lr.projectId;
+        linearSettled = true;                       // live tracker — never create
+      }
+      // zero issues → blank slate; fall through to creation if a team was chosen
     } catch (e) {
       out.linearError = 'Linear (pull existing): ' + (e.message || 'failed');
+      // Only a definite "project not found" clears the way to create a fresh
+      // tracker; any other failure (auth, network) must not risk a duplicate.
+      if (!e || e.status !== 404) linearSettled = true;
     }
-  } else if (linearKey && b.teamId) {
+  }
+  if (linearKey && !linearSettled && b.teamId) {
     try {
       onProgress('Creating Linear project + issues');
       lr = await linear.createProjectWithIssues(linearKey, { teamId: b.teamId, name: p.name, intake, startDate: intake.startDate, plan });

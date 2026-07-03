@@ -398,11 +398,11 @@
         '<label>Claude API key</label><input type="password" id="b-ai" placeholder="sk-ant-… (or leave blank if a server key is set)" value="' + esc(savedKey) + '" autocomplete="off" />' +
         '<label class="chk"><input type="checkbox" id="b-remember"' + (savedKey ? ' checked' : '') + ' /> Remember on this device</label>' +
         '<hr style="border:none;border-top:1px solid var(--line);margin:14px 0" />' +
-        '<label>Linear API key <span style="text-transform:none;letter-spacing:0">(optional — to create the tracker)</span></label>' +
+        '<label>Linear API key <span style="text-transform:none;letter-spacing:0">(optional — links or creates the tracker)</span></label>' +
         '<div class="row2" style="align-items:flex-end"><div style="flex:2"><input type="password" id="b-lin" placeholder="lin_api_… (write access)" autocomplete="off" /></div>' +
         '<div style="flex:1"><button class="btn sm" id="b-teams">Load teams</button></div></div>' +
         '<label>Team</label><select id="b-team" disabled><option value="">— enter a key, then Load teams —</option></select>' +
-        '<div class="hint">Keys are used per-request and never stored on the server. The tracker is always a <b>new</b> project — it never writes into an existing one.</div>' +
+        '<div class="hint">Keys are used per-request and never stored on the server. <b>Safe to re-run:</b> a linked tracker that already has issues is re-linked read-only (issues change only via change requests); a <b>new</b> Linear project is created only when none is linked or the linked one is empty.</div>' +
         '<div style="display:flex;gap:8px;margin-top:14px;align-items:center"><button class="btn sm primary" id="b-go">' + ic('sparkles') + 'Build</button>' +
         '<button class="btn sm" id="b-stop" style="display:none;color:#E0A848;border-color:#E0A848">■ Stop</button>' +
         '<span class="hint" id="b-status"></span></div>' +
