@@ -982,9 +982,13 @@ function makeBundleEditable(stage) {
 // Deploy now — push a generated package to a Docker host over SSH and bring it
 // up, all from inside this container (needs the SSH password; key auth isn't
 // available here). Returns the live URL + the remote build output.
+const deploysInFlight = new Set();
 app.post('/api/projects/:id/deploy', (req, res) => {
   const p = storage.getProject(req.params.id);
   if (!p) return res.status(404).json({ error: 'not found' });
+  // One deploy per project — concurrent rsync + compose runs against the same
+  // pod race each other and can leave it half-updated.
+  if (deploysInFlight.has(p.id)) return res.status(409).json({ ok: false, error: 'a deploy is already running for this project — wait for it to finish', running: true });
   const dir = storage.generatedDir(p.id);
   if (!fs.existsSync(dir)) return res.status(404).json({ error: 'nothing generated' });
   const b = req.body || {};
@@ -1009,6 +1013,7 @@ app.post('/api/projects/:id/deploy', (req, res) => {
   let stage;
   try { stage = stageDeploy(dir, params); }
   catch (e) { return res.status(500).json({ ok: false, error: 'stage failed: ' + String(e.message || e) }); }
+  deploysInFlight.add(p.id);
   // The bundle must carry the enrichment cache — the pod's re-renders need it,
   // or every AI-enriched section (architecture diagram, request flows, ACs)
   // silently degrades to the deterministic fallback.
@@ -1076,6 +1081,7 @@ app.post('/api/projects/:id/deploy', (req, res) => {
     } catch (e) {
       res.status(500).json({ ok: false, error: String(e.message || e), output: out.join('').slice(-6000) });
     } finally {
+      deploysInFlight.delete(p.id);
       try { fs.rmSync(stage, { recursive: true, force: true }); } catch (e2) {}
     }
   })();
@@ -1200,7 +1206,13 @@ app.post('/api/self-update/creds', (req, res) => {
 // Returns as soon as it's kicked off — the wizard restarts itself mid-run, so we
 // can't await it. Creds come from the stored file / env (see resolveHostCreds);
 // the request body may override them for a one-off run.
+let selfUpdateStartedAt = 0;   // in-memory is enough — the container restarts mid-update anyway
 app.post('/api/self-update', (req, res) => {
+  // One update at a time: a double-click would launch two detached update-all
+  // runs doing git reset + compose rebuild simultaneously on the host.
+  if (selfUpdateStartedAt && Date.now() - selfUpdateStartedAt < 15 * 60 * 1000) {
+    return res.status(409).json({ error: 'an update is already running (started ' + Math.round((Date.now() - selfUpdateStartedAt) / 60000) + ' min ago) — the wizard will restart when it lands', running: true });
+  }
   const hostIp = (process.env.HOST_IP || '').trim();
   if (!hostIp) return res.status(400).json({ error: 'HOST_IP is not set on this wizard, so it can’t locate its own host to update. Set HOST_IP in the compose env, or update from the host with scripts/update.sh.', code: 'no_host_ip' });
   const sshPort = (process.env.DEPLOY_SSH_PORT || '22').trim();
@@ -1229,6 +1241,7 @@ app.post('/api/self-update', (req, res) => {
       });
     }
     // 2. Auth works — answer the browser NOW, before the wizard rebuilds itself.
+    selfUpdateStartedAt = Date.now();
     res.json({ ok: true, started: true, target, message: 'Update started on ' + target + '. The wizard will rebuild (brief downtime) then redeploy your apps.' });
     // 3. Launch the detached updater; fire-and-forget. Pass the host password to
     //    update-all.sh via an env var (not a logged arg) so app redeploys on the

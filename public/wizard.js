@@ -581,7 +581,9 @@
         .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }, function () { return { ok: r.ok, j: {} }; }); });
     }
     function E(html) { var d = document.createElement('div'); d.innerHTML = html; return d.firstElementChild; }
-    function bgModal(inner) { var b = document.createElement('div'); b.className = 'modal-bg'; b.innerHTML = '<div class="modal edit-modal">' + inner + '</div>'; document.body.appendChild(b); b.addEventListener('click', function (e) { if (e.target === b) b.remove(); }); return b; }
+    // No backdrop-click dismiss — an accidental click must never throw away an
+    // assess review; every caller provides its own close/cancel control.
+    function bgModal(inner) { var b = document.createElement('div'); b.className = 'modal-bg'; b.innerHTML = '<div class="modal edit-modal">' + inner + '</div>'; document.body.appendChild(b); return b; }
     function swim(arch) {
       var wrap = E('<div class="al-wrap"><svg class="al-edges"></svg></div>');
       (arch.layers || []).forEach(function (L) {
@@ -644,7 +646,7 @@
         body.appendChild(E('<h4 class="chg-grp">Architecture diagram (updated)</h4>'));
         var dc = E('<div class="chg-card"><label class="chg-acc"><input type="checkbox" id="wz-diag-cb" checked> accept the updated diagram</label> <button class="btn xs" id="wz-fs" type="button">⛶ Full screen</button></div>');
         var sw = swim(draft.architecture); dc.appendChild(sw); body.appendChild(dc);
-        dc.querySelector('#wz-fs').addEventListener('click', function () { var fb = document.createElement('div'); fb.className = 'modal-bg'; var w = swim(draft.architecture); w.style.maxWidth = '95vw'; var box = E('<div class="modal" style="max-width:96vw;width:96vw"><h3>Architecture — updated</h3></div>'); box.appendChild(w); fb.appendChild(box); document.body.appendChild(fb); fb.addEventListener('click', function (e) { if (e.target === fb) fb.remove(); }); setTimeout(function () { drawSwim(w, draft.architecture.edges); }, 60); });
+        dc.querySelector('#wz-fs').addEventListener('click', function () { var fb = document.createElement('div'); fb.className = 'modal-bg'; var w = swim(draft.architecture); w.style.maxWidth = '95vw'; var box = E('<div class="modal" style="max-width:96vw;width:96vw"><h3 style="display:flex;align-items:center;justify-content:space-between;gap:12px">Architecture — updated <button class="btn sm" id="wz-fs-close" type="button">Close</button></h3></div>'); box.appendChild(w); fb.appendChild(box); document.body.appendChild(fb); box.querySelector('#wz-fs-close').addEventListener('click', function () { fb.remove(); }); setTimeout(function () { drawSwim(w, draft.architecture.edges); }, 60); });
         setTimeout(function () { drawSwim(sw, draft.architecture.edges); }, 90);
       }
       var groups = { doc: 'Documentation', linear: 'Linear issues', 'affected-closed': 'Affected completed issues', code: 'Code impact' };
