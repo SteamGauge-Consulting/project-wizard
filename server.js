@@ -257,6 +257,22 @@ function writeAux(p, dir) {
   syncReferenceDir(p);
 }
 
+// The generated /docs tree is a RENDER of the answers, and deploys ship the
+// tree verbatim — so every intake edit must re-render it, or the next deploy
+// ships stale ADR/requirement markdown that no longer matches the answers.
+// Deterministic (no AI): reuses the cached enrichment + live Linear structure,
+// like apply-changes. Best-effort — the edit is saved regardless.
+function rerenderGenerated(p) {
+  const dir = storage.generatedDir(p.id);
+  if (!fs.existsSync(dir)) return false;
+  const integ = (p.answers && p.answers.integrations) || {};
+  try {
+    renderIntake.render(dir, intakeOf(p), { docsDir: integ.docsDir || 'docs', enrich: p.lastEnrich || null, linear: p.linear || null });
+    writeAux(p, dir);
+    return true;
+  } catch (e) { console.error('re-render after intake edit failed:', e.message); return false; }
+}
+
 // ─── projects CRUD ──────────────────────────────────────────────────────────
 app.get('/api/projects', (req, res) => {
   res.json(storage.listProjects().map(summarize));
@@ -291,8 +307,10 @@ app.put('/api/projects/:id', (req, res) => {
   const p = storage.getProject(req.params.id);
   if (!p) return res.status(404).json({ error: 'not found' });
   if (typeof req.body.name === 'string' && req.body.name.trim()) p.name = req.body.name.trim();
-  if (req.body.answers && typeof req.body.answers === 'object') p.answers = req.body.answers;
+  const answersChanged = !!(req.body.answers && typeof req.body.answers === 'object');
+  if (answersChanged) p.answers = req.body.answers;
   storage.saveProject(p);
+  if (answersChanged) rerenderGenerated(p);
   res.json(summarize(p));
 });
 
@@ -1145,7 +1163,7 @@ app.post('/api/self-update', (req, res) => {
 // Mounts the UI-side token mint/list/revoke routes and the token-authed
 // /api/agent/* surface. See lib/agent-api.js + AGENT-API.md.
 agentApi.mount(app, {
-  storage, intakeOf, summarize, emptyAnswers, walkTree, safeGenPath, PORT,
+  storage, intakeOf, summarize, emptyAnswers, walkTree, safeGenPath, PORT, rerenderGenerated,
 });
 
 app.get('/healthz', (req, res) => res.json({ ok: true }));
