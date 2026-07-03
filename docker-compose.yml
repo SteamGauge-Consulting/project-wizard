@@ -16,6 +16,11 @@ services:
       # entering one in the GUI each time. Leave unset to require the GUI field.
       # The wizard never writes a key to disk; a GUI-entered key is used per-request.
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      # Optional but recommended once you have a real hostname: the wizard's
+      # public URL (e.g. https://projects.example.com). Baked into deployed pods
+      # as WIZARD_URL — powers each pod's "← App" link and Update-app callback.
+      # Set it in an untracked .env next to this file so updates never lose it.
+      - WIZARD_PUBLIC_URL=${WIZARD_PUBLIC_URL:-}
     volumes:
       - project-wizard-data:/app/data   # projects + generated trees persist here
       # Key-based "Deploy now" (for key-only SSH servers): mounts the host user's

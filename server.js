@@ -31,6 +31,11 @@ const app = express();
 const PORT = process.env.PORT || 4500;
 const KIT = path.join(__dirname, 'lib', 'docs-kit.js');
 
+// Remember the wizard's public origin from ANY browser request, so internally
+// triggered deploys (update-apps over 127.0.0.1) bake real URLs into pods —
+// not loopback ones. See publicWizardOrigin().
+app.use((req, res, next) => { try { publicWizardOrigin(req); } catch (e) {} next(); });
+
 // ── House defaults ───────────────────────────────────────────────────────────
 // The org's standard stack lives in house-defaults.json inside the persistent
 // data volume — NOT in the repo tree — so `scripts/update.sh` (which hard-resets
@@ -78,16 +83,26 @@ const emptyAnswers = () => ({
 // browser on another machine.
 const WIZ_ORIGIN_FILE = path.join(DATA_ROOT, 'wizard-origin.json');
 const LOOPBACK_RE = /^https?:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0|\[?::1\]?)(:\d+)?$/i;
+let wizOriginCache = null;
 function publicWizardOrigin(req) {
+  // Deterministic override for a proper install: set WIZARD_PUBLIC_URL (e.g.
+  // https://projects.example.com) and every baked URL uses it, always.
+  const forced = String(process.env.WIZARD_PUBLIC_URL || '').trim().replace(/\/+$/, '');
+  if (forced) return forced;
   const host = req && req.headers && req.headers.host;
   const proto = host ? String((req.headers['x-forwarded-proto'] || req.protocol || 'http')).split(',')[0].trim() : 'http';
   const seen = host ? proto + '://' + host : '';
   if (seen && !LOOPBACK_RE.test(seen)) {
-    try { fs.mkdirSync(DATA_ROOT, { recursive: true }); fs.writeFileSync(WIZ_ORIGIN_FILE, JSON.stringify({ origin: seen }) + '\n'); } catch (e) {}
+    if (wizOriginCache !== seen) {
+      wizOriginCache = seen;
+      try { fs.mkdirSync(DATA_ROOT, { recursive: true }); fs.writeFileSync(WIZ_ORIGIN_FILE, JSON.stringify({ origin: seen }) + '\n'); } catch (e) {}
+    }
     return seen;
   }
-  try { const s = JSON.parse(fs.readFileSync(WIZ_ORIGIN_FILE, 'utf8')); if (s && s.origin) return s.origin; } catch (e) {}
-  return seen;
+  if (!wizOriginCache) {
+    try { const s = JSON.parse(fs.readFileSync(WIZ_ORIGIN_FILE, 'utf8')); if (s && s.origin) wizOriginCache = s.origin; } catch (e) {}
+  }
+  return wizOriginCache || seen;
 }
 
 function wizardEditUrl(req, id) {
