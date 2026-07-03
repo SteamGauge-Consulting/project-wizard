@@ -614,9 +614,23 @@ app.post('/api/projects/:id/build-full', async (req, res) => {
   //    re-linked READ-ONLY (issues change only via per-issue change requests).
   //    A tracker is created only from a blank slate — no linked project, or a
   //    linked one with ZERO issues — and only when a team was chosen.
-  const linearKey = (b.linearKey && String(b.linearKey).trim()) || '';
+  // Resolve the Linear key without re-entry: request body → per-project
+  // connection overrides → the deployed pod's Integrations tab → wizard env.
+  let linearKey = (b.linearKey && String(b.linearKey).trim()) || '';
+  if (!linearKey) {
+    let podKeys = null;
+    if (p.deployUrl) {
+      try {
+        const origin = String(p.deployUrl).replace(/\/docs\/?$/, '');
+        const rr = await fetch(origin + '/api/integrations/keys.json', { signal: AbortSignal.timeout(6000) });
+        if (rr.ok) podKeys = await rr.json();
+      } catch (e) { /* pod unreachable — overrides/env still apply */ }
+    }
+    try { linearKey = String(agentTokens.resolveConnections(p, process.env, podKeys).linearKey || '').trim(); } catch (e) {}
+  }
   const existingProjectId = (b.linearProjectId && String(b.linearProjectId).trim()) || (p.linearProjectId && String(p.linearProjectId).trim()) || '';
   let linearSettled = false;
+  if (!linearKey && existingProjectId) out.linearError = 'Linear: no key available — enter one in the dialog or on the pod’s Integrations tab.';
   if (linearKey && existingProjectId) {
     try {
       onProgress('Checking the linked Linear tracker');
@@ -655,7 +669,7 @@ app.post('/api/projects/:id/build-full', async (req, res) => {
   if (enrich || lr) {
     try {
       onProgress('Rendering docs');
-      renderIntake.render(dir, intake, { docsDir, enrich, linear: lr, wizardEditUrl: wizardEditUrl(req, p.id) });
+      renderIntake.render(dir, intake, { docsDir, enrich, linear: lr || p.linear || null, wizardEditUrl: wizardEditUrl(req, p.id) });
       writeAux(p, dir);
     } catch (e) {
       console.error('render-intake (build-full) failed:', e.message);

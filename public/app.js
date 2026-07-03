@@ -393,15 +393,16 @@
     try { savedKey = localStorage.getItem(KEY_LS) || ''; } catch (e) {}
     var bg = document.createElement('div'); bg.className = 'modal-bg';
     bg.innerHTML = '<div class="modal exp-modal"><h3>Build full docs + Linear</h3>' +
-      '<p class="hint">AI rewrites the docs <b>in the wizard’s copy</b> — a Mermaid architecture diagram, a Gantt, and Given/When/Then acceptance criteria — and, optionally, creates a brand-new Linear project with milestones + issues. <b>This does not deploy</b>; afterward use <b>Export / Deploy</b> to push the updated docs to your Docker host. Requires a Claude API key.</p>' +
+      '<p class="hint">AI rewrites the docs <b>in the wizard’s copy</b> — the architecture diagram, request flows, and Given/When/Then acceptance criteria — and links your Linear tracker (or creates one from a blank slate). <b>This does not deploy</b>; afterward use <b>Export / Deploy</b> to push the updated docs to your Docker host. Requires a Claude API key.</p>' +
       '<div class="dform">' +
         '<label>Claude API key</label><input type="password" id="b-ai" placeholder="sk-ant-… (or leave blank if a server key is set)" value="' + esc(savedKey) + '" autocomplete="off" />' +
         '<label class="chk"><input type="checkbox" id="b-remember"' + (savedKey ? ' checked' : '') + ' /> Remember on this device</label>' +
         '<hr style="border:none;border-top:1px solid var(--line);margin:14px 0" />' +
-        '<label>Linear API key <span style="text-transform:none;letter-spacing:0">(optional — links or creates the tracker)</span></label>' +
+        '<div class="hint" id="b-linked" style="display:none;margin-bottom:10px"></div>' +
+        '<label>Linear API key <span style="text-transform:none;letter-spacing:0" id="b-lin-lab">(optional — links or creates the tracker)</span></label>' +
         '<div class="row2" style="align-items:flex-end"><div style="flex:2"><input type="password" id="b-lin" placeholder="lin_api_… (write access)" autocomplete="off" /></div>' +
-        '<div style="flex:1"><button class="btn sm" id="b-teams">Load teams</button></div></div>' +
-        '<label>Team</label><select id="b-team" disabled><option value="">— enter a key, then Load teams —</option></select>' +
+        '<div style="flex:1" id="b-teamsbtn"><button class="btn sm" id="b-teams">Load teams</button></div></div>' +
+        '<div id="b-teamrow"><label>Team</label><select id="b-team" disabled><option value="">— enter a key, then Load teams —</option></select></div>' +
         '<div class="hint">Keys are used per-request and never stored on the server. <b>Safe to re-run:</b> a linked tracker that already has issues is re-linked read-only (issues change only via change requests); a <b>new</b> Linear project is created only when none is linked or the linked one is empty.</div>' +
         '<div style="display:flex;gap:8px;margin-top:14px;align-items:center"><button class="btn sm primary" id="b-go">' + ic('sparkles') + 'Build</button>' +
         '<button class="btn sm" id="b-stop" style="display:none;color:#E0A848;border-color:#E0A848">■ Stop</button>' +
@@ -414,6 +415,23 @@
     bg.addEventListener('click', function (e) { if (e.target === bg) bg.remove(); });
     bg.querySelector('#b-close').addEventListener('click', function () { bg.remove(); });
     var status = bg.querySelector('#b-status'), sel = bg.querySelector('#b-team');
+
+    // Already linked to a Linear project? Say so, drop the team picker (it's
+    // ignored — the tracker is re-linked read-only), and make the key optional:
+    // the server resolves it from per-project overrides / the pod's
+    // Integrations tab / env when the field is left blank.
+    var linkedTracker = false;
+    api('/api/projects/' + id).then(function (r) {
+      if (!r.ok || !r.j || !r.j.linearProjectId) return;
+      linkedTracker = true;
+      var lt = bg.querySelector('#b-linked');
+      lt.style.display = 'block';
+      lt.innerHTML = '✓ Linked Linear tracker' + (r.j.linearUrl ? ' — <a href="' + esc(r.j.linearUrl) + '" target="_blank" rel="noopener" style="color:var(--accent)">open ↗</a>' : '') +
+        '. The build re-links it <b>read-only</b> — no issues are created or changed.';
+      bg.querySelector('#b-lin-lab').textContent = '(optional — read automatically from the pod’s Integrations tab; paste one only to override)';
+      bg.querySelector('#b-teamrow').style.display = 'none';
+      bg.querySelector('#b-teamsbtn').style.display = 'none';
+    }).catch(function () {});
 
     bg.querySelector('#b-teams').addEventListener('click', function () {
       var k = bg.querySelector('#b-lin').value.trim();
@@ -431,7 +449,7 @@
 
     bg.querySelector('#b-go').addEventListener('click', function () {
       var btn = this; var key = bg.querySelector('#b-ai').value.trim();
-      var linKey = bg.querySelector('#b-lin').value.trim(), teamId = sel.value;
+      var linKey = bg.querySelector('#b-lin').value.trim(), teamId = linkedTracker ? '' : sel.value;
       try { if (bg.querySelector('#b-remember').checked && key) localStorage.setItem(KEY_LS, key); else localStorage.removeItem(KEY_LS); } catch (e) {}
       btn.disabled = true;
       status.style.color = '';
