@@ -63,6 +63,18 @@ function houseDefaults() {
 seedHouseDefaults();
 
 app.use(express.json({ limit: '2mb' }));
+
+// Entra SSO gate (no-op unless AUTH_MODE=entra). Registered BEFORE static + the
+// API so the whole wizard is protected; /auth/*, /healthz, /api/agent/* (own
+// bearer), loopback, and the machine token are exempt. The machine token is
+// baked into deployed pods so wizard↔pod callbacks keep working under the gate.
+const auth = require('./lib/auth');
+const gate = auth.mount(app, { secretDir: DATA_ROOT });
+const MACHINE_TOKEN = auth.machineToken(DATA_ROOT);
+// Header that lets a wizard→pod call pass the pod's Entra gate (and vice-versa).
+const machineHeaders = (h) => Object.assign({ 'x-pw-machine': MACHINE_TOKEN }, h || {});
+app.use(gate);
+
 app.use(express.static(path.join(__dirname, 'public')));
 
 // The wizard's own build (git short SHA, baked by scripts/update.sh) — shown in the
@@ -631,7 +643,7 @@ app.post('/api/projects/:id/build-full', async (req, res) => {
     if (p.deployUrl) {
       try {
         const origin = String(p.deployUrl).replace(/\/docs\/?$/, '');
-        const rr = await fetch(origin + '/api/integrations/keys.json', { signal: AbortSignal.timeout(6000) });
+        const rr = await fetch(origin + '/api/integrations/keys.json', { headers: machineHeaders(), signal: AbortSignal.timeout(6000) });
         if (rr.ok) podKeys = await rr.json();
       } catch (e) { /* pod unreachable — overrides/env still apply */ }
     }
@@ -884,7 +896,7 @@ app.all('/api/projects/:id/pod/:action(assess|apply|intake|changes)', async (req
   const get = req.method === 'GET' || req.params.action === 'intake' || req.params.action === 'changes';
   try {
     const r = await fetch(origin + '/api/' + req.params.action, Object.assign(
-      { method: get ? 'GET' : 'POST', headers: { 'content-type': 'application/json' } },
+      { method: get ? 'GET' : 'POST', headers: machineHeaders({ 'content-type': 'application/json' }) },
       get ? {} : { body: JSON.stringify(req.body || {}) }));
     const text = await r.text();
     res.status(r.status).type('application/json').send(text);
@@ -969,7 +981,7 @@ function makeBundleEditable(stage) {
   try { fs.mkdirSync(libDst, { recursive: true }); } catch (e) {}
   // governance-gate is required by linear.js + enrich.js — omitting it made pods
   // crash on boot with MODULE_NOT_FOUND once that dependency was introduced.
-  for (const m of ['docs-editor', 'assess', 'linear', 'render-intake', 'reverse-engineer', 'enrich', 'governance-gate']) {
+  for (const m of ['docs-editor', 'assess', 'linear', 'render-intake', 'reverse-engineer', 'enrich', 'governance-gate', 'auth']) {
     try { fs.copyFileSync(path.join(__dirname, 'lib', m + '.js'), path.join(libDst, m + '.js')); }
     catch (e) { console.error('makeBundleEditable: could not ship lib/' + m + '.js:', e.message); }
   }
@@ -981,6 +993,9 @@ function makeBundleEditable(stage) {
   // Mount the editor BEFORE docs-server so its HTML-injection middleware wraps the
   // page responses (it appends the client <script>). Idempotent; matches both the
   // plain `(app)` form and the rewritten `(app, { linearProjectId: … })` form.
+  // Also mount the Entra gate (no-op unless the pod's AUTH_MODE=entra) FIRST, so
+  // it protects the editor + docs routes; the pod's .deploy dir holds its session
+  // secret + machine token.
   const sd = path.join(stage, 'serve-docs.js');
   try {
     let src = fs.readFileSync(sd, 'utf-8');
@@ -988,6 +1003,7 @@ function makeBundleEditable(stage) {
       // Anchor at column 0 (multiline) so we match the REAL statement, not the
       // `//   require('./lib/docs-server')(app);` example in the header comment.
       src = src.replace(/^(require\('\.\/lib\/docs-server'\)\(app[^;]*\);)/m,
+        "app.use(require('./lib/auth').mount(app, { secretDir: __dirname + '/.deploy' }));\n" +
         "require('./lib/docs-editor')(app);\n$1");
       fs.writeFileSync(sd, src);
     }
@@ -1014,7 +1030,19 @@ app.post('/api/projects/:id/deploy', (req, res) => {
   const usePassword = !!(b.password && String(b.password).trim());
 
   const wizardUrl = publicWizardOrigin(req);
-  const params = { name: b.name || p.name, host: b.host, sshUser: b.user, sshPort: b.sshPort, port: b.port, hostname: b.hostname, linearKey: b.linearKey, anthropicKey: b.apiKey, linearProjectId: b.linearProjectId || p.linearProjectId, wizardUrl: wizardUrl, wizardProjectId: p.id, buildVersion: (process.env.BUILD_VERSION || 'dev') };
+  // Pods inherit the wizard's Entra config (one Azure app per org; each pod +
+  // the wizard is a registered redirect URI) so the whole install is gated with
+  // no extra secrets to enter. The pod's redirect origin (AUTH_PUBLIC_URL) is
+  // derived from its own routed hostname by deploy-bundle unless overridden.
+  const entra = {
+    mode: process.env.AUTH_MODE || '',
+    tenant: process.env.ENTRA_TENANT_ID || '',
+    clientId: process.env.ENTRA_CLIENT_ID || '',
+    clientSecret: process.env.ENTRA_CLIENT_SECRET || '',
+    allowed: process.env.ENTRA_ALLOWED || '',
+    publicUrl: (b.authPublicUrl && String(b.authPublicUrl).trim()) || '',
+  };
+  const params = { name: b.name || p.name, host: b.host, sshUser: b.user, sshPort: b.sshPort, port: b.port, hostname: b.hostname, linearKey: b.linearKey, anthropicKey: b.apiKey, linearProjectId: b.linearProjectId || p.linearProjectId, wizardUrl: wizardUrl, wizardProjectId: p.id, buildVersion: (process.env.BUILD_VERSION || 'dev'), machineToken: MACHINE_TOKEN, entra: entra };
   const name = deployBundle.slugify(params.name);
   const user = (b.user || 'docker').trim();
   const host = String(b.host).trim();
@@ -1089,7 +1117,7 @@ app.post('/api/projects/:id/deploy', (req, res) => {
         let rerendered = false;
         for (let i = 0; i < 40 && !rerendered; i++) {
           await new Promise((r) => setTimeout(r, 3000));
-          try { const rr = await fetch(origin + '/api/rerender', { method: 'POST' }); if (rr.ok) { rerendered = true; out.push('\n→ re-rendered pod docs from its own intake\n'); } } catch (e) {}
+          try { const rr = await fetch(origin + '/api/rerender', { method: 'POST', headers: machineHeaders() }); if (rr.ok) { rerendered = true; out.push('\n→ re-rendered pod docs from its own intake\n'); } } catch (e) {}
         }
         if (!rerendered) out.push('\n⚠ pod did not answer /api/rerender within 2 min — its pages may be stale; open the docs and use ☰ → Sync from Linear\n');
       }
@@ -1278,7 +1306,7 @@ app.post('/api/self-update', (req, res) => {
 // Mounts the UI-side token mint/list/revoke routes and the token-authed
 // /api/agent/* surface. See lib/agent-api.js + AGENT-API.md.
 agentApi.mount(app, {
-  storage, intakeOf, summarize, emptyAnswers, walkTree, safeGenPath, PORT, rerenderGenerated,
+  storage, intakeOf, summarize, emptyAnswers, walkTree, safeGenPath, PORT, rerenderGenerated, dataRoot: DATA_ROOT,
 });
 
 app.get('/healthz', (req, res) => res.json({ ok: true }));

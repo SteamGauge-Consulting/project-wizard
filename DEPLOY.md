@@ -60,6 +60,46 @@ docker compose exec project-wizard sh -lc 'vi /app/data/house-defaults.json'
 Nothing stack-specific is baked into the code or the AI prompts — change the
 default in one place here.
 
+## Microsoft Entra (Azure AD) SSO
+
+Gate the wizard **and every docs pod it deploys** behind corporate sign-in.
+Off by default; turn it on with an `.env` next to `docker-compose.yml` (untracked,
+so `update.sh`'s hard-reset never discards it):
+
+```bash
+# ~/apps/project-wizard/.env
+AUTH_MODE=entra
+ENTRA_TENANT_ID=<your-tenant-guid>
+ENTRA_CLIENT_ID=<app-registration-client-id>
+ENTRA_CLIENT_SECRET=<client-secret-value>
+ENTRA_ALLOWED=@treebrandapps.com          # comma list of emails and/or @domains
+AUTH_PUBLIC_URL=https://projects.treebrandapps.com   # the wizard's own https origin
+AUTH_SESSION_HOURS=12
+```
+
+Then `docker compose up -d --build`. How it works:
+
+- **One Azure app registration per org** serves the wizard and all its pods. Add
+  a **redirect URI** for each surface: `https://projects.<domain>/auth/callback`
+  (wizard) and `https://<app-host>/docs/auth/callback` for each pod exposed at
+  `/docs`. Pods inherit the wizard's tenant/client/secret automatically at deploy
+  — you only register their redirect URI in Azure.
+- **Authorization is the `ENTRA_ALLOWED` allow-list.** A valid tenant sign-in is
+  necessary but not sufficient — the account's email (or its `@domain`) must be
+  listed, or it's rejected with a "not authorized" page.
+- **Machine surfaces stay open**: loopback (internal forwards, `update.sh`),
+  `/api/agent/*` (its own bearer tokens), and the shared machine token the wizard
+  bakes into pods keep the wizard↔pod deploy callbacks working under the gate.
+- **Misconfig fails closed**: `AUTH_MODE=entra` with missing `ENTRA_*` returns 503
+  everywhere rather than serving open.
+
+**Reproduce for another domain** (e.g. `steamgaugeconsulting.com`): stand up a
+separate install with that org's own `.env` (its tenant/client/secret,
+`AUTH_PUBLIC_URL`, and `ENTRA_ALLOWED`). Nothing is shared between installs.
+
+Redeploy each existing pod once after enabling so it picks up the gate (the
+wizard forwards the Entra config into the pod's compose on deploy).
+
 ## Updating an existing install
 
 ```bash
