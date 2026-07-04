@@ -706,8 +706,8 @@
           '<div class="row2"><div><label>SSH user</label><input type="text" id="d-user" value="docker" /></div><div><label>SSH port</label><input type="text" id="d-sshport" value="22" /></div></div>' +
           '<label>SSH password</label><input type="password" id="d-pass" placeholder="needed so the wizard can push over SSH" />' +
           '<div class="row2"><div><label>App name</label><input type="text" id="d-name" placeholder="my-docs" /></div><div><label>Container port</label><input type="text" id="d-port" value="3000" /></div></div>' +
-          '<label>Hostname for Traefik <span style="text-transform:none;letter-spacing:0">(optional)</span></label><input type="text" id="d-hostname" placeholder="docs.10.10.0.208.nip.io" />' +
-          '<div class="hint">Leave blank to publish the container port directly instead of going through a proxy.</div>' +
+          '<label>Hostname(s) for Traefik <span style="text-transform:none;letter-spacing:0">(optional — comma-separated; host or host/path)</span></label><input type="text" id="d-hostname" placeholder="docs.10.10.0.208.nip.io, myapp.example.com/docs" />' +
+          '<div class="hint">Leave blank to publish the container port directly. A <code>host/path</code> entry routes that path of the app’s own domain here — e.g. <code>crm.example.com/docs</code> serves the docs under the app’s domain.</div>' +
           '<div style="display:flex;gap:8px;margin-top:12px"><button class="btn sm primary" id="d-deploy">' + ic('upload') + 'Deploy now</button><button class="btn sm" id="d-dl">' + ic('download') + 'Download bundle</button></div>' +
           '<div class="hint" id="d-note" style="margin-top:8px"></div>' +
           '<pre id="d-out"></pre>' +
