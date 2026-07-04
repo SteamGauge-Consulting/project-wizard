@@ -22,7 +22,10 @@
   // ── tiny helpers ────────────────────────────────────────────────────────────
   function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
   function el(html) { var d = document.createElement('div'); d.innerHTML = html; return d.firstElementChild; }
-  function api(url, opts) { return fetch(url, opts).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }, function () { return { ok: r.ok, j: {} }; }); }); }
+  // All pod endpoints are called via their /docs-prefixed aliases so the editor
+  // works both on a direct pod hostname AND when the pod is exposed at
+  // <app-domain>/docs behind a path rule (where bare /api/* is the app's).
+  function api(url, opts) { return fetch('/docs' + url, opts).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }, function () { return { ok: r.ok, j: {} }; }); }); }
   function fmtWhen(iso) { if (!iso) return ''; var d = new Date(iso); if (isNaN(d)) return iso; return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) + ' · ' + d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }); }
   function toast(msg, isErr) {
     var t = el('<div class="pwe-toast' + (isErr ? ' err' : '') + '"></div>'); t.textContent = msg;
@@ -273,7 +276,7 @@
         var iv = setInterval(function () {
           tries++;
           if (tries > 60) { clearInterval(iv); st.innerHTML = 'Taking a while — reload the page in a moment to see the update.'; return; }
-          fetch('/api/intake', { cache: 'no-store' }).then(function (r) {
+          fetch('/docs/api/intake', { cache: 'no-store' }).then(function (r) {
             if (!r.ok) { sawDown = true; return; }
             if (sawDown) { clearInterval(iv); st.style.color = '#97C459'; st.textContent = '✓ Updated — reloading.'; setTimeout(function () { location.reload(true); }, 1200); }
           }).catch(function () { sawDown = true; });
@@ -375,7 +378,7 @@
         '<div class="pwe-row2"><div><label>Docs folder</label><input type="text" value="' + esc(ig.docsDir || 'docs') + '" disabled></div>' +
         '<div><label>This pod</label><input type="text" value="' + esc(location.host) + '" disabled></div></div>' +
         '<div style="margin-top:16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap"><button class="pwe-btn primary" id="ig-save">Save integrations</button>' +
-        '<a class="pwe-btn" href="/api/integrations/keys.json" download="keys.json" style="text-decoration:none">⤓ Download keys.json</a>' +
+        '<a class="pwe-btn" href="/docs/api/integrations/keys.json" download="keys.json" style="text-decoration:none">⤓ Download keys.json</a>' +
         '<span class="pwe-status" id="ig-st"></span></div>' +
         '<p class="pwe-hint" style="margin-top:8px">Download writes the real creds to a <code>keys.json</code> you can drop into a local clone (e.g. <code>.deploy/keys.json</code>) when running Claude Code off the host. It contains live secrets — keep it out of git.</p>';
       body.querySelector('#ig-save').addEventListener('click', function () {
@@ -664,7 +667,7 @@
 
   function openBrowse() {
     var m = modal('Export / code');
-    var dl = el('<a class="pwe-btn primary" href="/api/export" download style="text-decoration:none">⤓ Download (.tar.gz)</a>');
+    var dl = el('<a class="pwe-btn primary" href="/docs/api/export" download style="text-decoration:none">⤓ Download (.tar.gz)</a>');
     m.head.insertBefore(dl, m.head.querySelector('.pwe-x'));
     var brow = el('<div class="pwe-brow"><div class="pwe-tree"><div class="pwe-ph">loading…</div></div><div class="pwe-view"><div class="pwe-ph">Select a file to view it.</div></div></div>');
     m.mod.appendChild(brow);
