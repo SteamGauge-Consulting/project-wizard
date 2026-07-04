@@ -1106,7 +1106,11 @@ app.post('/api/projects/:id/deploy', (req, res) => {
       // Run the container as the deploying (SSH) user, not root, so files it writes
       // into the bind-mounted app dir stay owned by that user — otherwise the next
       // deploy's rsync can't overwrite them (Permission denied / rsync exit 23).
-      await runRemote('ssh', [...sshArgs, target, 'cd ~/apps/' + name + ' && PUID=$(id -u) PGID=$(id -g) docker compose up -d --build']);
+      // --force-recreate: the code lives in a bind mount, so a same-image rebuild
+      // would NOT restart the container — leaving node running the previous
+      // in-memory modules (stale docs/version) even though the files on disk are
+      // fresh. Force the restart so the new code is actually loaded.
+      await runRemote('ssh', [...sshArgs, target, 'cd ~/apps/' + name + ' && PUID=$(id -u) PGID=$(id -g) docker compose up -d --build --force-recreate']);
       // Re-render the pod's docs from its own intake with the just-shipped
       // engine — ALWAYS, not only on updates: a fresh pod otherwise serves the
       // wizard's staged tree verbatim, which may predate engine changes (stale
@@ -1121,11 +1125,22 @@ app.post('/api/projects/:id/deploy', (req, res) => {
         }
         if (!rerendered) out.push('\n⚠ pod did not answer /api/rerender within 2 min — its pages may be stale; open the docs and use ☰ → Sync from Linear\n');
       }
+      // If this project was previously deployed under a DIFFERENT app-name slug
+      // (e.g. the deploy dialog's App name changed, or was blank one time and set
+      // another), the old container/folder is now orphaned AND may still claim
+      // this hostname in Traefik — silently serving stale docs. Warn loudly with
+      // the exact cleanup command instead of leaving a duplicate route.
+      const prevName = p.deployTarget && p.deployTarget.name;
+      if (prevName && prevName !== name) {
+        out.push('\n⚠ This project was previously deployed as "' + prevName + '"; it is now "' + name +
+          '". The old pod may still be running and claiming the same hostname (serving stale docs). Retire it on the host:\n' +
+          '    cd ~/apps/' + prevName + ' && docker compose down\n');
+      }
       // Remember where it's live so the homepage card can deep-link to the docs,
       // and record the SSH deploy target (no password) so the agent API can report
       // "how to reach the Docker host" and redeploy without re-entering it.
       p.deployUrl = meta.reachUrl; p.deployedAt = new Date().toISOString();
-      p.deployTarget = { host: host, user: user, sshPort: sshPort, hostname: (b.hostname || '').trim() };
+      p.deployTarget = { host: host, user: user, sshPort: sshPort, hostname: (b.hostname || '').trim(), name: name };
       try { storage.saveProject(p); } catch (e) {}
       res.json({ ok: true, url: meta.reachUrl, output: out.join('').slice(-6000) });
     } catch (e) {
