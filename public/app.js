@@ -715,6 +715,16 @@
       '<div class="row"><button class="btn" id="exp-close">Close</button></div></div>';
     document.body.appendChild(bg);    bg.querySelector('#exp-close').addEventListener('click', function () { bg.remove(); });
     var note = bg.querySelector('#d-note'), outEl = bg.querySelector('#d-out');
+    // Prefill from the last deploy so a re-deploy (e.g. adding a Traefik
+    // hostname to an existing pod) doesn't mean re-typing the target.
+    api('/api/projects/' + id).then(function (r) {
+      var dt = r.ok && r.j && r.j.deployTarget;
+      if (!dt) return;
+      if (dt.host) bg.querySelector('#d-host').value = dt.host;
+      if (dt.user) bg.querySelector('#d-user').value = dt.user;
+      if (dt.sshPort) bg.querySelector('#d-sshport').value = dt.sshPort;
+      if (dt.hostname) bg.querySelector('#d-hostname').value = dt.hostname;
+    }).catch(function () {});
     function vals() {
       return {
         host: bg.querySelector('#d-host').value.trim(),
