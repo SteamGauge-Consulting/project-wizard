@@ -1,0 +1,44 @@
+# cloudflared-ingress.example.yml — Cloudflare Tunnel ingress for a Project
+# Wizard install. The tunnel sends public traffic to the Docker host's Traefik
+# (:80); Traefik then routes by Host + PathPrefix using the labels the wizard
+# and each pod already carry. So you generally only list one rule per hostname
+# pointing at Traefik — no per-path config needed here.
+#
+# Where this goes depends on how cloudflared runs on your host:
+#   • `cloudflared` service with a config file: merge the `ingress:` block into
+#     /etc/cloudflared/config.yml (or ~/.cloudflared/config.yml), then
+#     `sudo systemctl restart cloudflared`.
+#   • Dashboard-managed tunnel (Zero Trust → Networks → Tunnels → Public
+#     Hostnames): add each entry below as a Public Hostname (Service =
+#     http://localhost:80). The dashboard is the click-by-click path in Linear.
+#
+# Replace <TUNNEL_ID> and the hostnames for your domain.
+
+tunnel: <TUNNEL_ID>
+credentials-file: /root/.cloudflared/<TUNNEL_ID>.json
+
+ingress:
+  # The wizard itself.
+  - hostname: projects.treebrandapps.com
+    service: http://localhost:80
+
+  # Each app that also serves its docs pod at /docs under the app's domain.
+  # ORDER MATTERS: the /docs rule must come BEFORE the catch-all app rule so
+  # /docs* peels off to Traefik (which routes it to the docs pod) while the rest
+  # of the host goes to the app. If the app ALSO fronts through Traefik, you can
+  # collapse both into a single `hostname: crm.treebrandapps.com → :80` rule and
+  # let Traefik's Host+PathPrefix labels do the /docs split.
+  - hostname: crm.treebrandapps.com
+    path: ^/docs
+    service: http://localhost:80
+  - hostname: crm.treebrandapps.com
+    service: http://localhost:3000        # ← the CRM app's own port/proxy
+
+  # Optional: a wildcard so future pod subdomains need no tunnel edits (they still
+  # need a Cloudflare DNS record — a proxied CNAME to the tunnel — and a Traefik
+  # label from their deploy).
+  # - hostname: "*.treebrandapps.com"
+  #   service: http://localhost:80
+
+  # Required final rule.
+  - service: http_status:404

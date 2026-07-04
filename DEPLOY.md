@@ -60,6 +60,49 @@ docker compose exec project-wizard sh -lc 'vi /app/data/house-defaults.json'
 Nothing stack-specific is baked into the code or the AI prompts — change the
 default in one place here.
 
+## Public URL via Cloudflare
+
+Serve the wizard at a real hostname — `projects.treebrandapps.com` (and
+`projects.steamgaugeconsulting.com` for that install) — through a Cloudflare
+Tunnel to the host's Traefik. Reproducible per domain; do this **before** turning
+on Entra (the `AUTH_PUBLIC_URL` / redirect URIs use this hostname).
+
+**Chain:** browser → Cloudflare (TLS + optional Access) → Tunnel → Traefik (`:80`
+on the Docker host) → the wizard container (routed by its Traefik labels).
+
+1. **Traefik label for the wizard.** Copy the template and set the hosts in `.env`:
+   ```bash
+   cd ~/apps/project-wizard
+   cp docker-compose.override.example.yml docker-compose.override.yml
+   # .env:
+   #   HOST_IP=10.10.0.208
+   #   WIZARD_PUBLIC_HOST=projects.treebrandapps.com
+   #   WIZARD_LAN_HOST=wizard.10.10.0.208.nip.io      # optional, keep during transition
+   #   AUTH_PUBLIC_URL=https://projects.treebrandapps.com
+   #   WIZARD_PUBLIC_URL=https://projects.treebrandapps.com
+   docker compose up -d --build
+   ```
+   (Requires a Traefik proxy on the external `web` network — the same one the
+   docs pods join.)
+2. **Cloudflare DNS.** In the Cloudflare dashboard for the domain → DNS → add a
+   **proxied** (orange-cloud) `CNAME`: name `projects`, target
+   `<TUNNEL_ID>.cfargotunnel.com`.
+3. **Tunnel ingress.** Zero Trust → Networks → Tunnels → your tunnel → Public
+   Hostname → add `projects.treebrandapps.com` → Service `http://localhost:80`
+   (Traefik). See `deploy/cloudflared-ingress.example.yml` for the file-based
+   form and the per-pod `/docs` routing.
+4. **Cloudflare Access (recommended, defense-in-depth).** Entra is now the primary
+   gate, so Access is optional — but adding an Access application on
+   `projects.treebrandapps.com` (Zero Trust → Access → Applications, self-hosted)
+   scoped to your org gives a second layer in front of the SSH creds the wizard
+   holds. If you skip it, Entra still fully gates the app.
+5. Reach it at **https://projects.treebrandapps.com**. Redeploy each docs pod with
+   its public `/docs` hostname so pods front the same way (see "Update later").
+
+**Reproduce for another domain:** same five steps on that install with its own
+`WIZARD_PUBLIC_HOST=projects.steamgaugeconsulting.com`, DNS record, tunnel, and
+(optional) Access policy.
+
 ## Microsoft Entra (Azure AD) SSO
 
 Gate the wizard **and every docs pod it deploys** behind corporate sign-in.

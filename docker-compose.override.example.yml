@@ -1,0 +1,38 @@
+# docker-compose.override.example.yml — put the wizard behind Traefik so it's
+# reachable at a real hostname (LAN nip.io and/or a public domain via Cloudflare).
+#
+# Copy to docker-compose.override.yml (gitignored, so updates never touch it) and
+# set the hosts in your .env. Without this file the wizard just publishes its port
+# directly (the base compose).
+#
+#   cp docker-compose.override.example.yml docker-compose.override.yml
+#   # then in .env:
+#   #   HOST_IP=10.10.0.208
+#   #   WIZARD_LAN_HOST=wizard.10.10.0.208.nip.io          # optional LAN host
+#   #   WIZARD_PUBLIC_HOST=projects.treebrandapps.com      # public host (Cloudflare)
+#   docker compose up -d --build
+#
+# Requires a Traefik proxy already running on the external `web` network (the same
+# one the deployed docs pods join). The public host is served through Cloudflare →
+# tunnel → Traefik (see DEPLOY.md "Public URL via Cloudflare").
+services:
+  project-wizard:
+    networks: [default, web]
+    environment:
+      - HOST_IP=${HOST_IP:-}
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=web
+      # Public host (Cloudflare). Also set AUTH_PUBLIC_URL=https://<this host> in .env.
+      - traefik.http.routers.wizard.rule=Host(`${WIZARD_PUBLIC_HOST}`)
+      - traefik.http.routers.wizard.entrypoints=web
+      - traefik.http.routers.wizard.service=wizard
+      # LAN host (nip.io) — remove this router if you only want the public host,
+      # or leave WIZARD_LAN_HOST unset and delete these three lines.
+      - traefik.http.routers.wizard-lan.rule=Host(`${WIZARD_LAN_HOST}`)
+      - traefik.http.routers.wizard-lan.entrypoints=web
+      - traefik.http.routers.wizard-lan.service=wizard
+      - traefik.http.services.wizard.loadbalancer.server.port=4500
+networks:
+  web:
+    external: true
