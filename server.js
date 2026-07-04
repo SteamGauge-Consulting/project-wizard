@@ -1025,6 +1025,9 @@ app.post('/api/projects/:id/deploy', (req, res) => {
   const sshCmdStr = 'ssh -F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=15 -p ' + sshPort;
   const env = usePassword ? Object.assign({}, process.env, { SSHPASS: String(b.password) }) : process.env;
 
+  // Freshen the wizard's tree with the CURRENT engine before staging, so even a
+  // pod that misses its post-deploy rerender never serves ancient page layouts.
+  try { rerenderGenerated(p); } catch (e) { /* stage what exists */ }
   let stage;
   try { stage = stageDeploy(dir, params); }
   catch (e) { return res.status(500).json({ ok: false, error: 'stage failed: ' + String(e.message || e) }); }
@@ -1076,15 +1079,19 @@ app.post('/api/projects/:id/deploy', (req, res) => {
       // into the bind-mounted app dir stay owned by that user — otherwise the next
       // deploy's rsync can't overwrite them (Permission denied / rsync exit 23).
       await runRemote('ssh', [...sshArgs, target, 'cd ~/apps/' + name + ' && PUID=$(id -u) PGID=$(id -g) docker compose up -d --build']);
-      // On an update, re-render the pod's docs from ITS preserved intake with the
-      // new engine (the rsync shipped wizard-content docs; this replaces them with
-      // the pod's own content under the new templates). Pod needs a moment to boot.
-      if (existing) {
+      // Re-render the pod's docs from its own intake with the just-shipped
+      // engine — ALWAYS, not only on updates: a fresh pod otherwise serves the
+      // wizard's staged tree verbatim, which may predate engine changes (stale
+      // Gantt/layout pages). Fresh containers npm-install on first boot, so
+      // poll patiently and REPORT if it never lands instead of failing silent.
+      {
         const origin = meta.reachUrl.replace(/\/docs\/?$/, '');
-        for (let i = 0; i < 12; i++) {
+        let rerendered = false;
+        for (let i = 0; i < 40 && !rerendered; i++) {
           await new Promise((r) => setTimeout(r, 3000));
-          try { const rr = await fetch(origin + '/api/rerender', { method: 'POST' }); if (rr.ok) { out.push('\n→ re-rendered pod docs from its own intake\n'); break; } } catch (e) {}
+          try { const rr = await fetch(origin + '/api/rerender', { method: 'POST' }); if (rr.ok) { rerendered = true; out.push('\n→ re-rendered pod docs from its own intake\n'); } } catch (e) {}
         }
+        if (!rerendered) out.push('\n⚠ pod did not answer /api/rerender within 2 min — its pages may be stale; open the docs and use ☰ → Sync from Linear\n');
       }
       // Remember where it's live so the homepage card can deep-link to the docs,
       // and record the SSH deploy target (no password) so the agent API can report
