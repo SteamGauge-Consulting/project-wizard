@@ -103,6 +103,41 @@ on the Docker host) → the wizard container (routed by its Traefik labels).
 `WIZARD_PUBLIC_HOST=projects.steamgaugeconsulting.com`, DNS record, tunnel, and
 (optional) Access policy.
 
+## Key-only SSH hosts (deploy/republish auth)
+
+The wizard deploys and republishes docs pods over SSH. It uses a **password**
+(when you enter one in the Deploy dialog / store one in a project's connection)
+**or an SSH key** — it mounts the host user's `~/.ssh` (read-only) into the
+container. As of the auth-fallback change, if a password is supplied but the
+host **rejects password auth** (a key-only server — the common on-prem case),
+the wizard automatically falls back to the mounted key. So the fix for
+"password is being rejected, host only accepts key auth" is to give the wizard
+host user a key that's authorized on the target.
+
+Most installs deploy pods to the **same host** the wizard runs on, so the host
+user just needs to authorize its own key (self-authorize):
+
+```bash
+# on the wizard/Docker host, as the user that runs docker (e.g. sgcadmin):
+ls ~/.ssh/id_* 2>/dev/null || ssh-keygen -t ed25519 -N '' -f ~/.ssh/id_ed25519
+cat ~/.ssh/id_ed25519.pub >> ~/.ssh/authorized_keys
+chmod 600 ~/.ssh/authorized_keys
+# verify key auth works to itself (the target the wizard uses):
+ssh -o BatchMode=yes "$USER@$(hostname -I | awk '{print $1}')" true && echo OK
+```
+
+Deploying to a **different** host? Put the wizard host user's public key
+(`~/.ssh/id_*.pub`) into that target user's `~/.ssh/authorized_keys` instead
+(`ssh-copy-id <user>@<target>`).
+
+Then leave the Deploy dialog's SSH password **blank** (or leave the stale one —
+the wizard now falls back to the key when the password is rejected). The
+container already mounts `~/.ssh`, so no compose change is needed; a rebuild
+isn't required for authorizing the key, only for picking up wizard code changes.
+
+If both password and key fail, the deploy now returns a clear message naming the
+target instead of a generic "ssh exited 255".
+
 ## Microsoft Entra (Azure AD) SSO
 
 Gate the wizard **and every docs pod it deploys** behind corporate sign-in.

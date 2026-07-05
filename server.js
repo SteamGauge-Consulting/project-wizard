@@ -1026,8 +1026,12 @@ app.post('/api/projects/:id/deploy', (req, res) => {
   if (!b.host) return res.status(400).json({ ok: false, error: 'host is required' });
   // Two auth modes: a password (sshpass) OR SSH key. No password → key auth, which
   // uses the host's ~/.ssh mounted into this container (the key must be authorized
-  // on the target). On a key-only server, leave the password blank.
-  const usePassword = !!(b.password && String(b.password).trim());
+  // on the target). A password IS supplied but the host is key-only (password
+  // rejected)? We fall back to the mounted key automatically (resolveAuth below),
+  // so a stored/stale password never blocks a key-only host.
+  let usePassword = !!(b.password && String(b.password).trim());
+  // Is a usable private key mounted in the container (host user's ~/.ssh)?
+  const hasSshKey = (() => { try { return fs.readdirSync('/root/.ssh').some((f) => /^id_/.test(f) && !/\.pub$/.test(f)); } catch (e) { return false; } })();
 
   const wizardUrl = publicWizardOrigin(req);
   // Pods inherit the wizard's Entra config (one Azure app per org; each pod +
@@ -1051,7 +1055,8 @@ app.post('/api/projects/:id/deploy', (req, res) => {
   const meta = deployBundle.files(params)._meta;
   const sshArgs = ['-F', '/dev/null', '-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null', '-o', 'ConnectTimeout=15', '-p', sshPort];
   const sshCmdStr = 'ssh -F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=15 -p ' + sshPort;
-  const env = usePassword ? Object.assign({}, process.env, { SSHPASS: String(b.password) }) : process.env;
+  // Recomputed each spawn so a mid-deploy fallback from password → key takes effect.
+  const envFor = () => usePassword ? Object.assign({}, process.env, { SSHPASS: String(b.password) }) : process.env;
 
   // Freshen the wizard's tree with the CURRENT engine before staging, so even a
   // pod that misses its post-deploy rerender never serves ancient page layouts.
@@ -1070,7 +1075,7 @@ app.post('/api/projects/:id/deploy', (req, res) => {
 
   const out = [];
   const run = (cmd, args) => new Promise((resolve, reject) => {
-    const ps = spawn(cmd, args, { env, cwd: stage });
+    const ps = spawn(cmd, args, { env: envFor(), cwd: stage });
     ps.stdout.on('data', (d) => out.push(d.toString()));
     ps.stderr.on('data', (d) => out.push(d.toString()));
     ps.on('error', reject);
@@ -1080,8 +1085,29 @@ app.post('/api/projects/:id/deploy', (req, res) => {
   // mounted ~/.ssh key).
   const runRemote = (program, args) => usePassword ? run('sshpass', ['-e', program, ...args]) : run(program, args);
 
+  // Resolve which auth actually works BEFORE the deploy sequence: a cheap probe.
+  // If a password was supplied but the host rejects it (key-only host — the
+  // common on-prem case), fall back to the mounted key. Fail with an actionable
+  // message when neither works, instead of dying on the first mkdir.
+  async function resolveAuth() {
+    const probe = () => runRemote('ssh', [...sshArgs, '-o', 'BatchMode=' + (usePassword ? 'no' : 'yes'), target, 'true']);
+    try { await probe(); return; }
+    catch (e) {
+      if (usePassword && hasSshKey) {
+        out.push('\n→ password SSH rejected; falling back to the mounted SSH key…\n');
+        usePassword = false;
+        try { await probe(); return; } catch (e2) {
+          throw new Error('SSH auth to ' + target + ' failed with BOTH the supplied password and the mounted key. Authorize the wizard host user’s public key on the target (see DEPLOY.md → “Key-only SSH hosts”), or supply a password the host accepts.');
+        }
+      }
+      if (usePassword) throw new Error('SSH password rejected by ' + target + ', and no SSH key is mounted in the wizard. If the host only allows key auth, authorize the wizard host user’s key on it (DEPLOY.md → “Key-only SSH hosts”), or leave the password blank once a key is set up.');
+      throw new Error('SSH key auth to ' + target + ' failed. Authorize the wizard host user’s ~/.ssh public key on the target (DEPLOY.md → “Key-only SSH hosts”), or supply a password.');
+    }
+  }
+
   (async () => {
     try {
+      await resolveAuth();
       await runRemote('ssh', [...sshArgs, target, 'mkdir -p ~/apps/' + name]);
       // Is this an UPDATE of an existing pod (vs a first deploy)? If so, preserve
       // its content — the intake it's been edited to AND the AI enrichment it
