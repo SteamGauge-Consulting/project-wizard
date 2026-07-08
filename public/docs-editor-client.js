@@ -54,8 +54,13 @@
       { k: 'area', th: 'Area', ph: 'Availability', w: '22%' },
       { k: 'target', th: 'Target / requirement', ph: '99.9% uptime; p95 API < 200ms at 10k req/min', w: '46%', ml: true },
       { k: 'adr', th: 'ADR / decision', ph: 'Multi-AZ, autoscaling workers, read replicas', w: '32%', ml: true }] },
+    stakeholders: { label: 'stakeholder', title: 'Stakeholders', cols: [
+      { k: 'name', th: 'Name', ph: 'Jane Doe', w: '22%' },
+      { k: 'email', th: 'Email', ph: 'jane@acme.com', w: '26%' },
+      { k: 'phone', th: 'Phone', ph: '+1 555 0100', w: '16%' },
+      { k: 'role', th: 'Role in project', ph: 'Product owner / sponsor', w: '36%' }] },
   };
-  var TABLE_ORDER = ['requirements', 'decisions', 'milestones', 'risks', 'scalability'];
+  var TABLE_ORDER = ['requirements', 'decisions', 'milestones', 'risks', 'scalability', 'stakeholders'];
   var PRODUCT_FIELDS = [
     ['oneliner', 'One-liner — what is it, in your own words?', 'text'],
     ['problem', 'The problem — who hurts today, and why current options fail', 'area'],

@@ -126,6 +126,7 @@ refresh when you `POST {base}/generate` (or apply changes).
 | `milestones` | `name`, `done`, `target` |
 | `risks` | `risk`, `mitigation` |
 | `scalability` | `area`, `target`, `adr` |
+| `stakeholders` | `name`, `email`, `phone`, `role` |
 
 `answers.product`: `name, oneliner, problem, users, goal, success, differentiator,
 experience, notBuilding, domain`.

@@ -1,4 +1,4 @@
-// Router + home (project tiles) + generated-docs browser.
+// Router + home (prioritized project board) + generated-docs browser.
 (function () {
   'use strict';
   var app = document.getElementById('app');
@@ -72,7 +72,35 @@
     });
   }
 
-  // ─── home ────────────────────────────────────────────────────────────────
+  // ─── home: the prioritized project board ───────────────────────────────────
+  // Projects render as rows grouped into four status lanes; every row carries a
+  // priority number (1, 2, 3… across lanes in display order). "Reprioritize"
+  // switches the board into drag mode (within + between lanes); Save persists
+  // {status, priority} per project via POST /api/projects/reorder.
+  var LANES = [
+    { key: 'done', label: 'Done' },
+    { key: 'in-progress', label: 'In Progress' },
+    { key: 'up-next', label: 'Up Next' },
+    { key: 'later', label: 'Later' },
+  ];
+  var LANE_KEYS = LANES.map(function (l) { return l.key; });
+
+  // Group the flat /api/projects list into lanes: saved priority first
+  // (ascending), then legacy rows without one (server order = updatedAt desc).
+  function laneBuckets(projects) {
+    var by = {};
+    LANE_KEYS.forEach(function (k) { by[k] = []; });
+    projects.forEach(function (p) {
+      by[LANE_KEYS.indexOf(p.boardStatus) !== -1 ? p.boardStatus : 'up-next'].push(p);
+    });
+    LANE_KEYS.forEach(function (k) {
+      var ranked = by[k].filter(function (p) { return p.priority != null; }).sort(function (a, b) { return a.priority - b.priority; });
+      var rest = by[k].filter(function (p) { return p.priority == null; });
+      by[k] = ranked.concat(rest);
+    });
+    return by;
+  }
+
   function home() {
     app.innerHTML = '<div class="loading">loading…</div>';
     fetch('/api/projects').then(function (r) { return r.json(); }).then(function (projects) {
@@ -87,50 +115,143 @@
         fillMgmt();
         return;
       }
-      var tiles = projects.map(tileHtml).join('');
-      app.innerHTML =
-        '<div class="home-head"><h1>Projects<span class="count">' + projects.length + '</span></h1>' +
-        '<div style="display:flex;gap:12px;align-items:center"><div id="mgmt-links" style="display:flex;gap:8px"></div>' +
-        '<a class="hint" href="/demo-sequence.html">Worked example</a>' +
-        '<button class="btn primary" id="new-top">+ New project</button></div></div>' +
-        '<div class="tiles">' + tiles +
-        '<div class="tile new" id="new-tile"><div class="plus">+</div><div>New project</div></div></div>';
-      fillMgmt();
-      app.querySelector('#new-top').addEventListener('click', newProject);
-      app.querySelector('#new-tile').addEventListener('click', newProject);
-      app.querySelectorAll('.tile[data-id]').forEach(function (el) {
-        el.addEventListener('click', function (e) {
-          if (e.target.closest('.del')) return;
-          var id = el.getAttribute('data-id'), status = el.getAttribute('data-status'), deploy = el.getAttribute('data-deploy');
-          // The ⚙ on a deployed tile opens the internal manage/re-deploy view.
-          if (e.target.closest('.manage')) { location.hash = '#/p/' + id + '/docs'; return; }
-          // A deployed project's card deep-links to its LIVE /docs — edit & code
-          // tools now live under the hamburger menu on that deployed page.
-          if (deploy) { window.open(deploy, '_blank', 'noopener'); return; }
-          location.hash = status === 'generated' ? '#/p/' + id + '/docs' : '#/p/' + id + '/edit';
-        });
-        var del = el.querySelector('.del');
-        if (del) del.addEventListener('click', function () {
-          if (!confirm('Delete “' + el.getAttribute('data-name') + '” and its generated docs?')) return;
-          fetch('/api/projects/' + el.getAttribute('data-id'), { method: 'DELETE' }).then(home);
-        });
-      });
+      renderBoard(laneBuckets(projects), projects.length, false);
     });
   }
 
-  function tileHtml(p) {
+  function rowHtml(p, num, reorder) {
     var live = p.deployUrl ? esc(p.deployUrl) : '';
-    return '<div class="tile" data-id="' + p.id + '" data-status="' + p.status + '" data-name="' + esc(p.name) + '" data-deploy="' + live + '">' +
-      '<button class="del" title="delete">×</button>' +
-      (live ? '<button class="manage" title="manage / re-deploy">⚙</button>' : '') +
-      '<div class="name">' + esc(p.name) + '</div>' +
-      '<div class="one">' + (esc(p.oneliner) || '<span style="color:var(--dim)">no description yet</span>') + '</div>' +
-      '<div class="meta">' +
+    return '<div class="prow" data-id="' + p.id + '" data-status="' + p.status + '" data-name="' + esc(p.name) + '" data-deploy="' + live + '"' + (reorder ? ' draggable="true"' : '') + '>' +
+      (reorder ? '<span class="grip" title="drag to reorder">⠿</span>' : '') +
+      '<span class="prio">' + num + '</span>' +
+      '<span class="name">' + esc(p.name) + '</span>' +
+      '<span class="one">' + (esc(p.oneliner) || '<span style="color:var(--dim)">no description yet</span>') + '</span>' +
+      '<span class="meta">' +
       (live
         ? '<span class="pill live" title="' + live + '">live</span><span>open docs ↗</span>'
         : '<span class="pill ' + p.status + '">' + (p.status === 'generated' ? 'generated' : 'draft') + '</span>' +
           (p.status === 'generated' ? '<span>' + p.fileCount + ' files · ' + esc(p.docsDir) + '/</span>' : '<span>updated ' + fmtDate(p.updatedAt) + '</span>')) +
-      '</div></div>';
+      '</span>' +
+      (reorder ? '' :
+        (live ? '<button class="manage" title="manage / re-deploy">⚙</button>' : '') +
+        '<button class="del" title="delete">×</button>') +
+      '</div>';
+  }
+
+  function renderBoard(by, count, reorder) {
+    var num = 0;
+    var lanesHtml = LANES.map(function (l) {
+      var rows = by[l.key].map(function (p) { num++; return rowHtml(p, num, reorder); }).join('');
+      return '<div class="lane"><div class="lane-h">' + l.label + '<span class="lane-count">' + by[l.key].length + '</span></div>' +
+        '<div class="lane-rows" data-lane="' + l.key + '">' + (rows || '<div class="lane-empty">no projects</div>') + '</div></div>';
+    }).join('');
+    app.innerHTML =
+      '<div class="home-head"><h1>Projects<span class="count">' + count + '</span></h1>' +
+      '<div style="display:flex;gap:12px;align-items:center"><div id="mgmt-links" style="display:flex;gap:8px"></div>' +
+      '<a class="hint" href="/demo-sequence.html">Worked example</a>' +
+      (reorder
+        ? '<button class="btn sm" id="rp-cancel">Cancel</button><button class="btn primary" id="rp-save">Save order</button>'
+        : '<button class="btn sm" id="rp-start" title="Drag projects between lanes and up/down, then Save">⇅ Reprioritize</button>' +
+          '<button class="btn primary" id="new-top">+ New project</button>') +
+      '</div></div>' +
+      '<div class="lanes' + (reorder ? ' reordering' : '') + '">' + lanesHtml + '</div>' +
+      (reorder ? '' : '<div class="prow new" id="new-tile"><span class="plus">+</span> New project</div>');
+    fillMgmt();
+    if (reorder) {
+      app.querySelector('#rp-cancel').addEventListener('click', home);
+      app.querySelector('#rp-save').addEventListener('click', function () { saveOrder(by); });
+      bindDrag(by, count);
+    } else {
+      app.querySelector('#new-top').addEventListener('click', newProject);
+      app.querySelector('#new-tile').addEventListener('click', newProject);
+      app.querySelector('#rp-start').addEventListener('click', function () { renderBoard(by, count, true); });
+      bindRowNav();
+    }
+  }
+
+  function bindRowNav() {
+    app.querySelectorAll('.prow[data-id]').forEach(function (el) {
+      el.addEventListener('click', function (e) {
+        if (e.target.closest('.del')) return;
+        var id = el.getAttribute('data-id'), status = el.getAttribute('data-status'), deploy = el.getAttribute('data-deploy');
+        // The ⚙ on a deployed row opens the internal manage/re-deploy view.
+        if (e.target.closest('.manage')) { location.hash = '#/p/' + id + '/docs'; return; }
+        // A deployed project's row deep-links to its LIVE /docs — edit & code
+        // tools now live under the hamburger menu on that deployed page.
+        if (deploy) { window.open(deploy, '_blank', 'noopener'); return; }
+        location.hash = status === 'generated' ? '#/p/' + id + '/docs' : '#/p/' + id + '/edit';
+      });
+      var del = el.querySelector('.del');
+      if (del) del.addEventListener('click', function () {
+        if (!confirm('Delete “' + el.getAttribute('data-name') + '” and its generated docs?')) return;
+        fetch('/api/projects/' + el.getAttribute('data-id'), { method: 'DELETE' }).then(home);
+      });
+    });
+  }
+
+  // Drag within/between lanes (reorder mode). Same splice-and-rerender pattern
+  // as the wizard's table rows: mutate the lane arrays, re-render, rebind.
+  function bindDrag(by, count) {
+    var from = null;   // { lane, idx }
+    app.querySelectorAll('.lane-rows').forEach(function (host) {
+      var lane = host.getAttribute('data-lane');
+      host.querySelectorAll('.prow[data-id]').forEach(function (row, idx) {
+        row.addEventListener('dragstart', function (e) {
+          from = { lane: lane, idx: idx };
+          e.dataTransfer.effectAllowed = 'move';
+          try { e.dataTransfer.setData('text/plain', row.getAttribute('data-id')); } catch (x) {}
+          row.classList.add('dragging');
+        });
+        row.addEventListener('dragend', function () {
+          from = null;   // a cancelled drag must not leave a live source for a later foreign drop
+          row.classList.remove('dragging');
+          app.querySelectorAll('.drop-to,.drop-into').forEach(function (r) { r.classList.remove('drop-to'); r.classList.remove('drop-into'); });
+        });
+        row.addEventListener('dragover', function (e) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; row.classList.add('drop-to'); });
+        row.addEventListener('dragleave', function () { row.classList.remove('drop-to'); });
+        row.addEventListener('drop', function (e) {
+          e.preventDefault(); e.stopPropagation();
+          if (!from) return;
+          var moved = by[from.lane].splice(from.idx, 1)[0];
+          // The .drop-to cue is a line ABOVE the target row — insert before it.
+          // A same-lane downward move shifted the target left by one on removal.
+          var to = (lane === from.lane && from.idx < idx) ? idx - 1 : idx;
+          by[lane].splice(to, 0, moved);
+          from = null;
+          renderBoard(by, count, true);
+        });
+      });
+      // The lane itself (incl. an empty one) is a drop target — appends the row.
+      host.addEventListener('dragover', function (e) { e.preventDefault(); if (!e.target.closest('.prow[data-id]')) host.classList.add('drop-into'); });
+      host.addEventListener('dragleave', function (e) { if (!host.contains(e.relatedTarget)) host.classList.remove('drop-into'); });
+      host.addEventListener('drop', function (e) {
+        e.preventDefault();
+        if (!from) return;
+        var moved = by[from.lane].splice(from.idx, 1)[0];
+        by[lane].push(moved);
+        from = null;
+        renderBoard(by, count, true);
+      });
+    });
+  }
+
+  // Persist the new order: priority = position across lanes in display order.
+  // Only changed rows are sent, so an unchanged project's updatedAt stays put.
+  function saveOrder(by) {
+    var order = [], num = 0;
+    LANES.forEach(function (l) {
+      by[l.key].forEach(function (p) {
+        num++;
+        if (p.boardStatus !== l.key || p.priority !== num) order.push({ id: p.id, status: l.key, priority: num });
+      });
+    });
+    if (!order.length) { home(); return; }
+    api('/api/projects/reorder', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ order: order }) })
+      .then(function (res) {
+        if (!res.ok || !(res.j && res.j.ok)) { toast('✗ ' + ((res.j && res.j.error) || 'saving the order failed'), true); return; }
+        toast('Order saved');
+        home();
+      }).catch(function (e) { toast('✗ ' + e.message, true); });
   }
 
   function newProject() {
@@ -530,6 +651,7 @@
     milestones:   { title: 'Milestones',   cols: [['name', 'Milestone'], ['done', 'Done means'], ['target', 'Target']] },
     risks:        { title: 'Risks',        cols: [['risk', 'Risk / constraint'], ['mitigation', 'Mitigation']] },
     scalability:  { title: 'Non-functional & scale', cols: [['area', 'Area'], ['target', 'Target'], ['adr', 'Decision']] },
+    stakeholders: { title: 'Stakeholders',  cols: [['name', 'Name'], ['email', 'Email'], ['phone', 'Phone'], ['role', 'Role in project']] },
   };
   var EDIT_PRODUCT = [['oneliner', 'One-liner'], ['goal', 'Goal of this project (master objective)'], ['problem', 'Problem'], ['users', 'Users'], ['differentiator', 'Differentiator'], ['experience', 'Experience'], ['success', 'Success'], ['notBuilding', 'Not building (one per line)']];
 
@@ -538,6 +660,7 @@
       product: buf.product || {}, startDate: buf.startDate || '',
       requirements: buf.requirements || [], decisions: buf.decisions || [],
       milestones: buf.milestones || [], risks: buf.risks || [], scalability: buf.scalability || [],
+      stakeholders: buf.stakeholders || [],
     };
   }
 

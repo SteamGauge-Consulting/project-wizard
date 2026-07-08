@@ -26,6 +26,7 @@ const assessLib = require('./lib/assess');
 const linear = require('./lib/linear');
 const agentApi = require('./lib/agent-api');
 const agentTokens = require('./lib/agent-tokens');
+const entraGraph = require('./lib/entra-graph');
 
 const app = express();
 const PORT = process.env.PORT || 4500;
@@ -83,7 +84,7 @@ app.get('/api/version', (req, res) => res.json({ version: process.env.BUILD_VERS
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 const emptyAnswers = () => ({
-  product: {}, integrations: {}, requirements: [], decisions: [], milestones: [], risks: [], scalability: [],
+  product: {}, integrations: {}, requirements: [], decisions: [], milestones: [], risks: [], scalability: [], stakeholders: [],
 });
 
 // The wizard's own base URL, from the incoming request — used to bake an
@@ -122,7 +123,28 @@ function wizardEditUrl(req, id) {
   return origin ? origin + '/#/p/' + id + '/docs' : '';
 }
 
+// Homepage board lanes (Feature: prioritization). Kept on p.board — NOT in
+// answers (answers writes trigger a docs re-render) and NOT p.status (that's
+// the draft/generated lifecycle the tile routing + agent manifest depend on).
+// Legacy records have no board — default at read time, never migrate on disk.
+const BOARD_STATUSES = ['done', 'in-progress', 'up-next', 'later'];
+function boardOf(p) {
+  const b = p.board || {};
+  return {
+    status: BOARD_STATUSES.indexOf(b.status) !== -1 ? b.status : 'up-next',
+    priority: Number.isFinite(b.priority) ? b.priority : null,
+  };
+}
+// Long-running handlers (deploy / AI build / apply-changes) hold a record read
+// minutes earlier; a homepage reorder that lands meanwhile would be clobbered
+// by their whole-record save. Carry the freshest board over before saving.
+function refreshBoard(p) {
+  try { const fresh = storage.getProject(p.id); if (fresh && fresh.board) p.board = fresh.board; } catch (e) {}
+  return p;
+}
+
 function summarize(p) {
+  const board = boardOf(p);
   return {
     id: p.id, name: p.name, status: p.status,
     createdAt: p.createdAt, updatedAt: p.updatedAt, generatedAt: p.generatedAt || null,
@@ -131,6 +153,7 @@ function summarize(p) {
     fileCount: p.manifest ? p.manifest.fileCount : 0,
     attachmentCount: Array.isArray(p.attachments) ? p.attachments.length : 0,
     deployUrl: p.deployUrl || null, deployedAt: p.deployedAt || null,
+    boardStatus: board.status, priority: board.priority,
   };
 }
 
@@ -151,6 +174,7 @@ function intakeOf(p) {
     milestones: cleanRows(a.milestones, ['name', 'done', 'target']),
     risks: cleanRows(a.risks, ['risk', 'mitigation']),
     scalability: cleanRows(a.scalability, ['area', 'target', 'adr']),
+    stakeholders: cleanRows(a.stakeholders, ['name', 'email', 'phone', 'role']),
   };
 }
 function refsSection(p) {
@@ -285,6 +309,11 @@ function applyIntake(p, intake) {
   a.milestones = rowsOf(intake.milestones, ['name', 'done', 'target']);
   a.risks = rowsOf(intake.risks, ['risk', 'mitigation']);
   a.scalability = rowsOf(intake.scalability, ['area', 'target', 'adr']);
+  // Guarded: reverse-engineered / imported intakes usually lack stakeholders
+  // (people can't be inferred from code) — an absent key must not wipe them.
+  if (Array.isArray(intake.stakeholders)) {
+    a.stakeholders = rowsOf(intake.stakeholders, ['name', 'email', 'phone', 'role', 'source', 'entraId']);
+  }
   a.requirements.forEach((r) => { if (['Must', 'Should', 'May', "Won't"].indexOf(r.priority) === -1) r.priority = 'Should'; });
   if ((!p.name || p.name === 'Untitled project') && strOf(prod.name).trim()) p.name = strOf(prod.name).trim();
   p.answers = a;
@@ -328,6 +357,7 @@ app.post('/api/projects', (req, res) => {
   const project = {
     id: storage.newId(), name, status: 'draft',
     createdAt: now, updatedAt: now, answers: emptyAnswers(),
+    board: { status: 'up-next', priority: null },
   };
   // Pre-seed the architecture decisions from the org house defaults; every value
   // stays fully editable per project in the wizard.
@@ -339,6 +369,33 @@ app.post('/api/projects', (req, res) => {
   }
   storage.saveProject(project);
   res.status(201).json(project);
+});
+
+// Bulk board save (the homepage "Reprioritize → Save" flow). Fixed path, so it
+// must sit above the /:id routes. Re-reads each record fresh and touches ONLY
+// p.board — never writes a client-held record back (would clobber a concurrent
+// wizard autosave), and never triggers a docs re-render.
+app.post('/api/projects/reorder', (req, res) => {
+  const order = req.body && Array.isArray(req.body.order) ? req.body.order : null;
+  if (!order) return res.status(400).json({ error: 'body must be { order: [{ id, status, priority }] }' });
+  if (order.length > 500) return res.status(400).json({ error: 'too many order items (max 500)' });
+  let updated = 0;
+  const seen = new Set();
+  for (const it of order) {
+    const id = String((it && it.id) || '');
+    if (!/^[a-f0-9]{16}$/.test(id) || seen.has(id)) continue;
+    seen.add(id);
+    const p = storage.getProject(id);
+    if (!p) continue;
+    const pri = Number(it.priority);
+    p.board = {
+      status: BOARD_STATUSES.indexOf(it.status) !== -1 ? it.status : 'up-next',
+      priority: Number.isFinite(pri) && pri > 0 ? Math.round(pri) : null,
+    };
+    storage.saveProject(p);
+    updated++;
+  }
+  res.json({ ok: true, updated });
 });
 
 app.get('/api/projects/:id', (req, res) => {
@@ -446,7 +503,7 @@ app.post('/api/projects/:id/generate-draft', async (req, res) => {
     const intake = await reverse.generateIntake(p.name, corpus, apiKey);
     applyIntake(p, intake);
     p.draftFromCode = true;
-    storage.saveProject(p);
+    storage.saveProject(refreshBoard(p));
     res.json(Object.assign({ ok: true, mode: 'auto', model: reverse.MODEL, counts: {
       requirements: p.answers.requirements.length,
       decisions: p.answers.decisions.length,
@@ -513,7 +570,7 @@ app.post('/api/projects/:id/generate', (req, res) => {
     p.status = 'generated';
     p.generatedAt = new Date().toISOString();
     p.manifest = { fileCount: files.length, docsDir: integ.docsDir || 'docs' };
-    storage.saveProject(p);
+    storage.saveProject(refreshBoard(p));
     res.json({ ok: true, project: summarize(p), fileCount: files.length });
   });
 });
@@ -526,6 +583,24 @@ app.post('/api/linear/teams', async (req, res) => {
   if (!key) return res.status(400).json({ error: 'a Linear API key is required' });
   try { res.json({ ok: true, teams: await linear.listTeams(key) }); }
   catch (e) { res.status(e.status || 500).json({ error: 'Linear: ' + (e.message || 'request failed') }); }
+});
+
+// Directory people search for the wizard's Stakeholders step (Entra installs
+// only — /api/config carries the entraLookup capability flag so the client can
+// hide the control; manual entry always works). Fail-soft: never 500s the
+// wizard when Entra is off or the Graph permission hasn't been granted yet.
+app.get('/api/entra/people', async (req, res) => {
+  if (!entraGraph.enabled()) return res.json({ ok: false, reason: 'entra-off' });
+  // The machine token exists for pod→wizard deploy callbacks — it must not
+  // double as an org-directory search key (it sits on every pod).
+  if (req.headers['x-pw-machine']) return res.status(403).json({ ok: false, error: 'not available to machine callers' });
+  const q = String(req.query.q || '').trim();
+  if (q.length < 2) return res.json({ ok: true, people: [] });
+  try { res.json({ ok: true, people: await entraGraph.searchPeople(q) }); }
+  catch (e) {
+    console.error('entra people search failed:', e.message);
+    res.status(502).json({ ok: false, error: entraGraph.publicError(e) });
+  }
 });
 
 // Enrich the generated docs with AI (Mermaid diagrams, Given/When/Then, ADR
@@ -707,7 +782,7 @@ app.post('/api/projects/:id/build-full', async (req, res) => {
   if (enrich) p.lastEnrich = enrich;
   p.baseline = intake;
   p.enrichedAt = new Date().toISOString();
-  storage.saveProject(p);
+  storage.saveProject(refreshBoard(p));
   cancelledBuilds.delete(p.id);
   prog.current = 'Done'; prog.done = true; prog.finishedAt = Date.now();
   res.json(out);
@@ -879,7 +954,7 @@ app.post('/api/projects/:id/apply-changes', async (req, res) => {
   p.changes = Array.isArray(p.changes) ? p.changes : [];
   p.changes.push({ id: changeId, at: new Date().toISOString(), summary: b.summary || '', applied, errors });
   p.enrichedAt = new Date().toISOString();
-  storage.saveProject(p);
+  storage.saveProject(refreshBoard(p));
 
   res.json({ ok: true, changeId, applied, errors, project: summarize(p) });
 });
@@ -1167,7 +1242,7 @@ app.post('/api/projects/:id/deploy', (req, res) => {
       // "how to reach the Docker host" and redeploy without re-entering it.
       p.deployUrl = meta.reachUrl; p.deployedAt = new Date().toISOString();
       p.deployTarget = { host: host, user: user, sshPort: sshPort, hostname: (b.hostname || '').trim(), name: name };
-      try { storage.saveProject(p); } catch (e) {}
+      try { storage.saveProject(refreshBoard(p)); } catch (e) {}
       res.json({ ok: true, url: meta.reachUrl, output: out.join('').slice(-6000) });
     } catch (e) {
       res.status(500).json({ ok: false, error: String(e.message || e), output: out.join('').slice(-6000) });
@@ -1227,6 +1302,7 @@ app.get('/api/config', (req, res) => {
     aiServerKey: reverse.serverKeyConfigured(),   // a server-side ANTHROPIC_API_KEY is set (GUI can also supply one)
     aiModel: reverse.MODEL,
     houseDefaults: houseDefaults(),   // org standard stack; seeds new-project decisions + wizard hints
+    entraLookup: entraGraph.enabled(),   // Stakeholders step can search the Entra directory
   });
 });
 

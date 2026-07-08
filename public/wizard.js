@@ -6,6 +6,11 @@
   // `ml: true` = detailed-text column → renders as a multi-line textarea.
   // Title / short-label / select columns stay single-line.
   var TABLES = {
+    stakeholders: { label: 'stakeholder', cols: [
+      { k: 'name', th: 'Name', ph: 'Jane Doe', w: '22%' },
+      { k: 'email', th: 'Email', ph: 'jane@acme.com', w: '26%' },
+      { k: 'phone', th: 'Phone', ph: '+1 555 0100', w: '16%' },
+      { k: 'role', th: 'Role in project', ph: 'Product owner / sponsor', w: '36%' }] },
     requirements: { label: 'requirement', cols: [
       { k: 'title', th: 'Requirement', ph: 'Users can sign up and pay', w: '28%' },
       { k: 'priority', th: 'Priority', sel: ['Must', 'Should', 'May', 'Won’t'], w: '12%' },
@@ -29,6 +34,10 @@
 
   // Strong starter rows for the "Load examples" button on each table.
   var EXAMPLES = {
+    stakeholders: [
+      { name: 'Jane Doe', email: 'jane@acme.com', phone: '+1 555 0100', role: 'Product owner / sponsor' },
+      { name: 'Sam Rivera', email: 'sam@vendor.io', phone: '', role: 'Vendor contact (external)' },
+    ],
     requirements: [
       { title: 'Users can sign up and pay', priority: 'Must', test: 'A new visitor creates an account, enters card details, and reaches the paid dashboard in under 3 minutes' },
       { title: 'Owner can invite teammates', priority: 'Should', test: 'An owner sends an invite and the invitee accepts and sees the shared workspace within the same session' },
@@ -63,18 +72,24 @@
   // "Load examples" button and placeholder hints, so no specific architecture is
   // baked into this file. New projects are also pre-seeded server-side; per
   // project everything stays editable.
-  fetch('/api/config').then(function (r) { return r.json(); }).then(function (c) {
-    var hd = c && c.houseDefaults;
-    if (!hd) return;
-    if (Array.isArray(hd.decisions) && hd.decisions.length) EXAMPLES.decisions = hd.decisions;
-    if (hd.placeholders && hd.placeholders.decisions) {
-      var dp = hd.placeholders.decisions, cols = TABLES.decisions.cols;
-      if (dp.choice) cols[1].ph = dp.choice;
-      if (dp.why) cols[2].ph = dp.why;
+  // (Also carries capability flags — entraLookup gates the Stakeholders
+  // directory search, so steps that need config await CONFIG_READY.)
+  var CONFIG_READY = fetch('/api/config').then(function (r) { return r.json(); }).then(function (c) {
+    c = c || {};
+    var hd = c.houseDefaults;
+    if (hd) {
+      if (Array.isArray(hd.decisions) && hd.decisions.length) EXAMPLES.decisions = hd.decisions;
+      if (hd.placeholders && hd.placeholders.decisions) {
+        var dp = hd.placeholders.decisions, cols = TABLES.decisions.cols;
+        if (dp.choice) cols[1].ph = dp.choice;
+        if (dp.why) cols[2].ph = dp.why;
+      }
     }
-  }).catch(function () {});
+    return c;
+  }).catch(function () { return {}; });
 
   var HINTS = {
+    stakeholders: 'Who is involved and how to reach them — shows on the Stakeholders tab of the generated docs. Look people up in your Microsoft Entra directory (when connected) or type anyone in manually, including people outside the org.',
     requirements: 'One row per requirement. Priority is MoSCoW. Describe what the user should EXPERIENCE, in plain English — concrete and observable, naming an actor and an outcome — not how to build it. Say “reordering feels smooth and works by touch”, not “350ms SortableJS drag with forceFallback”. The agent picks the libraries, timings, and patterns, and turns each line into a Given/When/Then.',
     decisions: 'Each row becomes an ADR. Lock only what you want to stop re-litigating.',
     milestones: '3–6 milestones in shipping order. “Done means” is the user-visible outcome.',
@@ -101,8 +116,9 @@
     ], warn: '🔑 API keys stay out of this tool. The generated structure ships placeholders; pass keys to docs-kit on the CLI at deploy time.' },
   ];
 
-  // Tables render in object order: requirements, decisions, milestones, risks,
-  // then scalability (Non-Functional & Scale) — placed after Risks and before Generate.
+  // Tables render in object order: stakeholders, requirements, decisions,
+  // milestones, risks, then scalability (Non-Functional & Scale) — placed after
+  // Risks and before Generate.
   // A "Reference" step (file uploads) sits right after the scalar steps.
   var STEP_DEFS = [].concat(
     SCALAR_STEPS.map(function (s) { return { kind: 'scalar', title: s.title, def: s }; }),
@@ -314,13 +330,63 @@
           '<input type="date" id="ms-start" value="' + esc(answers.startDate || '') + '" style="max-width:220px" />' +
           '<div class="hint" style="margin-bottom:8px">Anchors milestone target dates — a “Week N” target becomes start + N weeks in Linear.</div>'
         : '';
-      var html = '<div class="step on"><h2>' + (spec.title || cap(t)) + '</h2><p class="stephint">' + HINTS[t] + '</p>' + dateField + '<div id="rowhost"></div></div>';
+      var lookup = (t === 'stakeholders') ? '<div id="entra-host"></div>' : '';
+      var html = '<div class="step on"><h2>' + (spec.title || cap(t)) + '</h2><p class="stephint">' + HINTS[t] + '</p>' + dateField + lookup + '<div id="rowhost"></div></div>';
       bodyEl.innerHTML = html;
       if (t === 'milestones') {
         var ds = bodyEl.querySelector('#ms-start');
         ds.addEventListener('input', function () { answers.startDate = ds.value; scheduleSave(); });
       }
       drawRows(t, bodyEl.querySelector('#rowhost'), spec);
+      if (t === 'stakeholders') entraLookup(bodyEl.querySelector('#entra-host'), bodyEl.querySelector('#rowhost'), spec);
+    }
+
+    // Entra directory lookup on the Stakeholders step — shown only when the
+    // server reports entraLookup (AUTH_MODE=entra + Graph creds). Picking a
+    // person appends a prefilled row (source:'entra'); people outside the org
+    // are added manually via the table, which always works.
+    function entraLookup(host, rowHost, spec) {
+      if (!host) return;
+      CONFIG_READY.then(function (c) {
+        if (!c || !c.entraLookup || !host.isConnected) return;
+        host.innerHTML = '<div class="entra-look"><label style="margin-top:0">Look up in Microsoft Entra</label>' +
+          '<input type="text" id="ent-q" placeholder="Type a name or email, then pick a person to add them" autocomplete="off" />' +
+          '<div id="ent-res"></div>' +
+          '<div class="hint">Someone outside the org? Add a row below and type their details.</div></div>';
+        var q = host.querySelector('#ent-q'), out = host.querySelector('#ent-res'), timer = null, seq = 0;
+        q.addEventListener('input', function () {
+          clearTimeout(timer);
+          var term = q.value.trim();
+          if (term.length < 2) { seq++; out.innerHTML = ''; return; }   // also invalidates any in-flight search
+          timer = setTimeout(function () {
+            var mine = ++seq;
+            out.innerHTML = '<div class="hint">searching…</div>';
+            fetch('/api/entra/people?q=' + encodeURIComponent(term))
+              .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+              .then(function (res) {
+                if (mine !== seq) return;
+                var j = res.j || {};
+                if (!res.ok || !j.ok) { out.innerHTML = '<div class="hint" style="color:var(--red)">✗ ' + esc(j.error || 'lookup unavailable') + '</div>'; return; }
+                if (!(j.people || []).length) { out.innerHTML = '<div class="hint">no matches in the directory</div>'; return; }
+                out.innerHTML = j.people.map(function (u, i) {
+                  return '<button type="button" class="ent-hit" data-hit="' + i + '"><b>' + esc(u.name) + '</b>' +
+                    (u.title ? ' <span class="ent-t">· ' + esc(u.title) + '</span>' : '') +
+                    '<span class="ent-m">' + esc(u.email) + (u.phone ? ' · ' + esc(u.phone) : '') + '</span></button>';
+                }).join('');
+                out.querySelectorAll('[data-hit]').forEach(function (b) {
+                  b.addEventListener('click', function () {
+                    var u = j.people[+b.getAttribute('data-hit')];
+                    var kept = answers.stakeholders.filter(function (row) { return !rowEmpty('stakeholders', row); });
+                    kept.push({ name: u.name || '', email: u.email || '', phone: u.phone || '', role: '', source: 'entra', entraId: u.entraId || '' });
+                    answers.stakeholders = kept;
+                    q.value = ''; out.innerHTML = '';
+                    scheduleSave(); drawRows('stakeholders', rowHost, spec);
+                  });
+                });
+              }).catch(function () { if (mine === seq) out.innerHTML = '<div class="hint" style="color:var(--red)">✗ lookup failed</div>'; });
+          }, 300);
+        });
+      });
     }
 
     // Seed strong starter rows. Drops empty placeholder rows, then appends the
@@ -684,7 +750,13 @@
       pod('intake').then(function (res) {
         if (res.ok && res.j && res.j.intake) {
           var k = res.j.intake; answers.product = k.product || {}; answers.integrations = k.integrations || answers.integrations || {}; answers.startDate = k.startDate || '';
-          Object.keys(TABLES).forEach(function (t) { answers[t] = (k[t] && k[t].length) ? k[t] : [emptyRow(t)]; });
+          // Reset each table from the pod — but a table the pod's intake
+          // predates entirely (no key, e.g. stakeholders on an old pod) keeps
+          // its local rows instead of being silently wiped.
+          Object.keys(TABLES).forEach(function (t) {
+            if (k[t] && k[t].length) answers[t] = k[t];
+            else if (t in k || !answers[t] || !answers[t].length) answers[t] = [emptyRow(t)];
+          });
           doSave(); go(cur);
         }
       });

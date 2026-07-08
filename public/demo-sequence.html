@@ -115,6 +115,10 @@
     { "risk": "JSON-file storage corruption on concurrent writes.", "mitigation": "Atomic write (temp file + rename); single-process server." },
     { "risk": "leadDays > cadence edge cases on short-cadence recurring tasks.", "mitigation": "Same-day floor in the recurring-completion branch; UI prevents setting leadDays > cadence." }
   ],
+  "stakeholders": [
+    { "name": "Alex Morgan", "email": "alex@steamgauge.consulting", "phone": "+1 555 0142", "role": "Product owner / household admin" },
+    { "name": "Sam Rivera", "email": "sam.rivera@example.com", "phone": "", "role": "Pilot user (external)" }
+  ],
   "scalability": [
     { "area": "Availability", "target": "Always-on on the home VM; survives reboots and redeploys.", "adr": "systemd service with restart policy; cron auto-pull/redeploy." },
     { "area": "Performance", "target": "TV refreshes within ~1s; editor actions feel instant on a phone.", "adr": "Static cached shell + small JSON payloads; no heavy client framework." },
@@ -152,7 +156,9 @@
     { key: 'risks', title: 'Risks', sub: 'What could sink it, and the hard constraints.',
       cols: [['risk','Risk / constraint'],['mitigation','Mitigation / hard limit']] },
     { key: 'scalability', title: 'Non-Functional & Scale', sub: 'The non-functional needs that shape architecture and ops — drives scaling ADRs.',
-      cols: [['area','Area'],['target','Target / requirement'],['adr','ADR / decision']] }
+      cols: [['area','Area'],['target','Target / requirement'],['adr','ADR / decision']] },
+    { key: 'stakeholders', title: 'Stakeholders', sub: 'Who is involved and how to reach them — shows on the Stakeholders tab of the generated docs.',
+      cols: [['name','Name'],['email','Email'],['phone','Phone'],['role','Role in project']] }
   ];
 
   var html = '';
@@ -187,7 +193,8 @@
       version: 1, kind: 'plan-intake', project: data.name,
       product: data.product, integrations: data.integrations,
       requirements: data.requirements, decisions: data.decisions,
-      milestones: data.milestones, risks: data.risks, scalability: data.scalability
+      milestones: data.milestones, risks: data.risks, scalability: data.scalability,
+      stakeholders: data.stakeholders
     };
   }
 
@@ -209,7 +216,8 @@
           body: JSON.stringify({ name: data.name, answers: {
             product: data.product, integrations: data.integrations,
             requirements: data.requirements, decisions: data.decisions,
-            milestones: data.milestones, risks: data.risks, scalability: data.scalability
+            milestones: data.milestones, risks: data.risks, scalability: data.scalability,
+            stakeholders: data.stakeholders
           } })
         }).then(function () { location.href = '/#/p/' + proj.id + '/edit'; });
       })
