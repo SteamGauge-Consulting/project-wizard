@@ -178,6 +178,40 @@ separate install with that org's own `.env` (its tenant/client/secret,
 Redeploy each existing pod once after enabling so it picks up the gate (the
 wizard forwards the Entra config into the pod's compose on deploy).
 
+### Stakeholder directory lookup (Microsoft Graph)
+
+With Entra on, the wizard's Stakeholders step can type-ahead search the org
+directory (people outside the org are still typed in manually). It needs one
+Graph grant that SSO doesn't: the **`User.Read.All` APPLICATION permission +
+admin consent**.
+
+Grant it to a **second, lookup-only app registration** rather than the SSO one —
+the SSO client secret is written into every pod's compose file on the Docker
+host, and granting *it* directory-read widens what a leaked pod secret can do:
+
+1. Azure portal → App registrations → **New registration** (e.g.
+   `project-wizard-directory-lookup`). No redirect URIs needed — it's
+   server-to-server only.
+2. That app → API permissions → Add → Microsoft Graph → **Application
+   permissions** → `User.Read.All` → **Grant admin consent**.
+3. That app → Certificates & secrets → new client secret.
+4. Add to the wizard's `.env` (wizard-only; never forwarded to pods):
+   ```bash
+   GRAPH_TENANT_ID=<tenant-guid>          # same tenant as SSO
+   GRAPH_CLIENT_ID=<lookup-app-client-id>
+   GRAPH_CLIENT_SECRET=<lookup-app-secret>
+   ```
+   then `docker compose up -d --build`.
+
+Shortcut (accepting the wider blast radius): skip the second registration,
+grant `User.Read.All` + admin consent to the SSO app, and set no `GRAPH_*` —
+the lookup falls back to the `ENTRA_*` creds.
+
+Verify: `curl -s https://projects.<domain>/api/config` shows
+`"entraLookup": true`, and the "Look up in Microsoft Entra" box appears on the
+wizard's Stakeholders step. Without the permission the box shows a clear
+"grant User.Read.All" error on first search.
+
 ## Updating an existing install
 
 ```bash

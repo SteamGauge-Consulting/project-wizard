@@ -35,6 +35,15 @@ services:
       - ENTRA_ALLOWED=${ENTRA_ALLOWED:-}          # comma list of emails or @domains
       - AUTH_PUBLIC_URL=${AUTH_PUBLIC_URL:-}       # the wizard's own https origin (Azure redirect base)
       - AUTH_SESSION_HOURS=${AUTH_SESSION_HOURS:-12}
+      # ── Entra directory lookup (wizard Stakeholders step) ──────────────────
+      # Optional SECOND app registration used only for Microsoft Graph people
+      # search (User.Read.All application permission). Keeping it separate means
+      # the SSO secret baked into pods can't read the directory. Unset = the
+      # lookup falls back to the ENTRA_* SSO creds (grant that app the
+      # permission instead). Wizard-only: never forwarded to pods.
+      - GRAPH_TENANT_ID=${GRAPH_TENANT_ID:-}
+      - GRAPH_CLIENT_ID=${GRAPH_CLIENT_ID:-}
+      - GRAPH_CLIENT_SECRET=${GRAPH_CLIENT_SECRET:-}
     volumes:
       - project-wizard-data:/app/data   # projects + generated trees persist here
       # Key-based "Deploy now" (for key-only SSH servers): mounts the host user's
