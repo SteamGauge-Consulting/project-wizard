@@ -78,7 +78,10 @@
     '.pwe-navbtn{color:#C8C8C2;text-decoration:none;padding:5px 9px;border-radius:7px;cursor:pointer;background:none;border:none;font:inherit;font-size:14px}',
     '.pwe-navbtn:hover{color:#fff;background:rgba(255,255,255,.06)}',
     '.pwe-burger{font-size:17px;line-height:1}',
-    '.pwe-menu{position:absolute;top:46px;right:12px;z-index:10050;background:#161618;border:1px solid #2A2A2E;border-radius:10px;padding:6px;min-width:210px;box-shadow:0 14px 34px rgba(0,0,0,.5)}',
+    // fixed, not absolute: the open handler positions it from getBoundingClientRect
+    // (viewport coords) under the STICKY nav — absolute put it at document-top,
+    // off-screen whenever the page was scrolled ("burger needs several clicks").
+    '.pwe-menu{position:fixed;top:46px;right:12px;z-index:10050;background:#161618;border:1px solid #2A2A2E;border-radius:10px;padding:6px;min-width:210px;box-shadow:0 14px 34px rgba(0,0,0,.5)}',
     '.pwe-menu button{display:flex;gap:9px;align-items:center;width:100%;text-align:left;color:#E8E8E4;background:none;border:none;padding:9px 11px;border-radius:7px;cursor:pointer;font:inherit;font-size:14px}',
     '.pwe-menu button:hover{background:rgba(255,255,255,.06)}',
     '.pwe-menu .pwe-sub{font-size:11px;color:#6A6A66;padding:7px 11px 3px;letter-spacing:.1em;text-transform:uppercase}',
