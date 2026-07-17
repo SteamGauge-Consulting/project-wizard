@@ -734,7 +734,7 @@
           btn.disabled = false; var j = res.j || {};
           if (!res.ok) {
             status.style.color = 'var(--red)';
-            status.innerHTML = '✗ ' + esc(j.error || 'failed') + (j.code === 'no_corpus' ? ' — <a href="#/p/' + id + '/edit">add a code/zip upload</a>, then assess.' : '');
+            status.innerHTML = '✗ ' + esc(j.error || 'failed') + (j.code === 'no_corpus' ? ' — <a href="#/p/' + id + '/edit">add a code/zip upload or a GitHub repo URL</a>, then assess.' : '') + (j.detail ? ' <span class="hint">' + esc(j.detail) + '</span>' : '');
             return;
           }
           if (j.empty) { status.style.color = ''; status.textContent = j.message || 'No changes to assess.'; return; }

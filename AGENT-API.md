@@ -166,7 +166,9 @@ derived from the live deploy URL / `HOST_IP`.**
 
 - **Write token:** secret *values* included (`includesSecrets: true`). Use
   `sshHost`/`sshUser`/`sshPort`/`sshPassword` to SSH to the Docker host;
-  `anthropicKey`/`linearKey`/`githubToken` for those services.
+  `anthropicKey`/`linearKey`/`githubToken` for those services. `githubRepoUrl`
+  (+ `githubToken` for private repos) also feeds Assess: the repo's latest
+  default-branch commit is pulled into the code corpus alongside the uploads.
 - **Read token:** secret values withheld; `configured` still shows what's set.
 
 Fields (secrets marked ★): `sshHost, sshUser, sshPort, sshPassword★, hostname,

@@ -20,6 +20,7 @@ const storage = require('./lib/storage');
 const staticSite = require('./lib/static-site');
 const deployBundle = require('./lib/deploy-bundle');
 const reverse = require('./lib/reverse-engineer');
+const githubCorpus = require('./lib/github-corpus');
 const renderIntake = require('./lib/render-intake');
 const enrichLib = require('./lib/enrich');
 const assessLib = require('./lib/assess');
@@ -346,6 +347,42 @@ function rerenderGenerated(p) {
   } catch (e) { console.error('re-render after intake edit failed:', e.message); return false; }
 }
 
+// ─── the assess/enrich code corpus: uploads + the linked GitHub repo ─────────
+// Roots for reverse.buildCorpus / buildFileIndex: the project's uploaded
+// attachments PLUS (when a GitHub repo is configured) a cached zipball of the
+// repo's latest default-branch commit — so Assess and enrichment read the
+// CURRENT code, not the originally-uploaded base. The repo token resolves like
+// every other connection (project override → pod Integrations tab → wizard
+// env); the pod fetch runs only when a repo is configured but no token is on
+// hand locally. Fail-soft: GitHub trouble never blocks a caller that has
+// uploads (or a previously-cached zip) — `github` reports what happened.
+async function corpusRootsFor(p) {
+  const roots = [storage.attachmentsDir(p.id)];
+  let conn = null;
+  try { conn = agentTokens.resolveConnections(p, process.env, null); } catch (e) {}
+  const repoUrl = (conn && conn.githubRepoUrl) || '';
+  const github = { configured: !!repoUrl, sha: null, stale: false, error: null };
+  if (!repoUrl) return { roots, github };
+  let token = (conn && conn.githubToken) || '';
+  if (!token && p.deployUrl) {
+    // The org enters creds on the pod's Integrations tab — the same source the
+    // Linear key resolves from at build time.
+    try {
+      const origin = String(p.deployUrl).replace(/\/docs\/?$/, '');
+      const rr = await fetch(origin + '/api/integrations/keys.json', { headers: machineHeaders(), signal: AbortSignal.timeout(6000) });
+      if (rr.ok) token = String((((await rr.json()) || {}).githubToken) || '').trim();
+    } catch (e) { /* pod unreachable — public repos still work tokenless */ }
+  }
+  try {
+    const r = await githubCorpus.syncRepoCache({ repoUrl, token, cacheDir: storage.githubCacheDir(p.id) });
+    roots.push(r.dir);
+    github.sha = r.sha;
+    github.stale = !!r.stale;
+    if (r.warning) github.error = r.warning;
+  } catch (e) { github.error = e.message || String(e); }
+  return { roots, github };
+}
+
 // ─── projects CRUD ──────────────────────────────────────────────────────────
 app.get('/api/projects', (req, res) => {
   res.json(storage.listProjects().map(summarize));
@@ -486,11 +523,11 @@ app.delete('/api/projects/:id/attachments', (req, res) => {
 app.post('/api/projects/:id/generate-draft', async (req, res) => {
   const p = storage.getProject(req.params.id);
   if (!p) return res.status(404).json({ error: 'not found' });
-  let corpus;
-  try { corpus = reverse.buildCorpus(storage.attachmentsDir(p.id)); }
+  let corpus, ghc = { configured: false };
+  try { const cr = await corpusRootsFor(p); ghc = cr.github; corpus = reverse.buildCorpus(cr.roots); }
   catch (e) { return res.status(500).json({ error: 'could not read the uploaded files: ' + (e.message || e) }); }
   if (!corpus.includedCount) {
-    return res.status(400).json({ error: 'no readable source found — upload your app’s code (files, a folder, or a .zip) first' });
+    return res.status(400).json({ error: 'no readable source found — upload your app’s code (files, a folder, or a .zip), or set the GitHub repo URL on the Integrations step' + (ghc.error ? ' (GitHub: ' + ghc.error + ')' : '') });
   }
   const apiKey = (req.body && req.body.apiKey) || '';
   const hasKey = !!String(apiKey).trim() || reverse.serverKeyConfigured();
@@ -676,7 +713,7 @@ app.post('/api/projects/:id/build-full', async (req, res) => {
       // instead of prefilling the whole codebase — ~100× cheaper + grounds each issue
       // in code it actually read. buildFileIndex exposes the files; cleanup() after.
       let index = null;
-      try { index = reverse.buildFileIndex(storage.attachmentsDir(p.id)); } catch (e) {}
+      try { index = reverse.buildFileIndex((await corpusRootsFor(p)).roots); } catch (e) {}
       try {
         enrich = await enrichLib.enrich(intake, apiKey, index, onProgress, checkCancel);
         // Plan: a continuous agentic session, one milestone at a time (reads + prior
@@ -818,11 +855,11 @@ app.post('/api/projects/:id/assess', async (req, res) => {
   if (!proposed) return res.status(400).json({ error: 'no proposed edits supplied' });
 
   // Code-impact requires the current codebase — hard gate (per the chosen design).
-  let corpus = null;
-  try { corpus = reverse.buildCorpus(storage.attachmentsDir(p.id)); } catch (e) {}
+  let corpus = null, ghc = { configured: false };
+  try { const cr = await corpusRootsFor(p); ghc = cr.github; corpus = reverse.buildCorpus(cr.roots); } catch (e) {}
   if (!corpus || !corpus.includedCount) {
     return res.status(400).json({ error: 'Attach the current codebase first', code: 'no_corpus',
-      detail: 'Assess Changes analyzes code impact against the real source, so it needs a code/zip upload in this project’s reference files. Add one, then assess.' });
+      detail: 'Assess Changes analyzes code impact against the real source. Upload the code (files or a .zip) to this project’s reference files, or set the GitHub repo URL (+ token for private repos) so assess pulls the latest code itself.' + (ghc.error ? ' GitHub: ' + ghc.error : '') });
   }
 
   const baseline = p.baseline || intakeOf(p);
@@ -848,7 +885,7 @@ app.post('/api/projects/:id/assess', async (req, res) => {
     ok: true, summary: ai.summary,
     units: buildChangeUnits(docDiff, ai),
     hasLinear: !!(p.linearProjectId && linearKey),
-    corpus: { files: corpus.fileCount, included: corpus.includedCount },
+    corpus: { files: corpus.fileCount, included: corpus.includedCount, github: ghc },
   });
 });
 
@@ -909,7 +946,7 @@ app.post('/api/projects/:id/apply-changes', async (req, res) => {
     const apiKey = (b.apiKey && String(b.apiKey).trim()) || '';
     if (applied.docSections.length && (apiKey || enrichLib.aiEnabled())) {
       try {
-        let corpus = null; try { corpus = reverse.buildCorpus(storage.attachmentsDir(p.id)); } catch (e) {}
+        let corpus = null; try { corpus = reverse.buildCorpus((await corpusRootsFor(p)).roots); } catch (e) {}
         enrich = await enrichLib.enrich(mergedIntake, apiKey, corpus && corpus.includedCount ? corpus : null);
         p.lastEnrich = enrich;
       } catch (e) { errors.push('re-enrich skipped: ' + e.message); }
@@ -1056,7 +1093,7 @@ function makeBundleEditable(stage) {
   try { fs.mkdirSync(libDst, { recursive: true }); } catch (e) {}
   // governance-gate is required by linear.js + enrich.js — omitting it made pods
   // crash on boot with MODULE_NOT_FOUND once that dependency was introduced.
-  for (const m of ['docs-editor', 'assess', 'linear', 'render-intake', 'reverse-engineer', 'enrich', 'governance-gate', 'auth']) {
+  for (const m of ['docs-editor', 'assess', 'linear', 'render-intake', 'reverse-engineer', 'enrich', 'governance-gate', 'auth', 'github-corpus']) {
     try { fs.copyFileSync(path.join(__dirname, 'lib', m + '.js'), path.join(libDst, m + '.js')); }
     catch (e) { console.error('makeBundleEditable: could not ship lib/' + m + '.js:', e.message); }
   }
@@ -1121,7 +1158,11 @@ app.post('/api/projects/:id/deploy', (req, res) => {
     allowed: process.env.ENTRA_ALLOWED || '',
     publicUrl: (b.authPublicUrl && String(b.authPublicUrl).trim()) || '',
   };
-  const params = { name: b.name || p.name, host: b.host, sshUser: b.user, sshPort: b.sshPort, port: b.port, hostname: b.hostname, linearKey: b.linearKey, anthropicKey: b.apiKey, linearProjectId: b.linearProjectId || p.linearProjectId, wizardUrl: wizardUrl, wizardProjectId: p.id, buildVersion: (process.env.BUILD_VERSION || 'dev'), machineToken: MACHINE_TOKEN, entra: entra };
+  // Bake the GitHub repo + token (project override → integrations → wizard env)
+  // so a fresh pod's Assess can pull the latest repo code with nothing re-entered.
+  let ghConn = {};
+  try { ghConn = agentTokens.resolveConnections(p, process.env, null); } catch (e) {}
+  const params = { name: b.name || p.name, host: b.host, sshUser: b.user, sshPort: b.sshPort, port: b.port, hostname: b.hostname, linearKey: b.linearKey, anthropicKey: b.apiKey, linearProjectId: b.linearProjectId || p.linearProjectId, githubRepoUrl: ghConn.githubRepoUrl, githubToken: ghConn.githubToken, wizardUrl: wizardUrl, wizardProjectId: p.id, buildVersion: (process.env.BUILD_VERSION || 'dev'), machineToken: MACHINE_TOKEN, entra: entra };
   const name = deployBundle.slugify(params.name);
   const user = (b.user || 'docker').trim();
   const host = String(b.host).trim();
@@ -1201,7 +1242,7 @@ app.post('/api/projects/:id/deploy', (req, res) => {
         // Always preserve host-side runtime state across redeploys: the integration
         // creds (Integrations tab) and the change log. On an update, also preserve
         // the pod's own intake + accepted enrichment (above).
-        '--exclude', '.deploy/keys.json', '--exclude', '.deploy/changes.json',
+        '--exclude', '.deploy/keys.json', '--exclude', '.deploy/changes.json', '--exclude', '.deploy/github-cache',
         ...preserve,
         './', target + ':apps/' + name + '/']);
       // Run the container as the deploying (SSH) user, not root, so files it writes

@@ -16,6 +16,11 @@ services:
       # entering one in the GUI each time. Leave unset to require the GUI field.
       # The wizard never writes a key to disk; a GUI-entered key is used per-request.
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      # Optional org-wide GitHub token: when a project's integrations name a
+      # GitHub repo, Assess pulls the repo's latest commit into the code corpus
+      # (public repos need no token). Per-project overrides via the agent API's
+      # /connections or the pod's Integrations tab win over this fallback.
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
       # Optional but recommended once you have a real hostname: the wizard's
       # public URL (e.g. https://projects.example.com). Baked into deployed pods
       # as WIZARD_URL — powers each pod's "← App" link and Update-app callback.
