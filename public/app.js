@@ -318,7 +318,7 @@
         '<label style="margin-top:20px">Claude API key' + (cfg.aiServerKey ? ' <span style="text-transform:none;letter-spacing:0">(optional — a server key is configured)</span>' : '') + '</label>' +
         '<input type="password" id="ai-key" placeholder="' + (cfg.aiServerKey ? 'leave blank to use the server key' : 'sk-ant-…') + '" value="' + esc(savedKey) + '" autocomplete="off" />' +
         '<label class="chk"><input type="checkbox" id="ai-remember"' + (savedKey ? ' checked' : '') + ' /> Remember on this device</label>' +
-        '<div class="hint">Used only to generate the draft, sent per-request — <b>never written to disk on the server</b>. Model: <code>' + esc(cfg.aiModel || 'claude-opus-4-8') + '</code>. No key? You’ll get a reverse-engineering prompt to run yourself.</div>' +
+        '<div class="hint">Used only to generate the draft, sent per-request — <b>never written to disk on the server</b>. Model: <code>' + esc(cfg.aiModel || 'claude-fable-5') + '</code>' + (cfg.aiFallbackModel && cfg.aiFallbackModel !== cfg.aiModel ? ' (falls back to <code>' + esc(cfg.aiFallbackModel) + '</code>)' : '') + '. No key? You’ll get a reverse-engineering prompt to run yourself.</div>' +
 
         '<div style="margin-top:18px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">' +
           '<button class="btn primary" id="gen-btn">' + ic('sparkles') + 'Generate draft requirements</button>' +

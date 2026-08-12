@@ -188,6 +188,7 @@ project-wizard/
 ├── lib/
 │   ├── storage.js         ← atomic per-project JSON + attachments/generated dirs
 │   ├── docs-kit.js        ← vendored generator (the one-file /docs bootstrap)
+│   ├── claude-model.js    ← the model every AI pass uses (Fable 5) + its Opus 5 fallback
 │   ├── reverse-engineer.js ← corpus builder + Claude call (structured output) + handoff prompt
 │   ├── static-site.js     ← build flat, relative-linked static HTML
 │   ├── deploy-bundle.js   ← Dockerfile/compose/deploy.sh for a target host
@@ -290,9 +291,10 @@ How it's wired (touch-points for future changes):
   the owner runs against their code with a coding agent to produce a
   `PLAN-INTAKE.json`, which they load via **Import a PLAN-INTAKE.json**
   (`POST …/import-intake`). That import button works standalone too.
-- **Model & tuning** — defaults to `claude-opus-4-8` at `medium` effort; override
-  with `WIZARD_MODEL`. Corpus size cap: `WIZARD_CORPUS_CHARS`. File-type coverage:
-  the `TEXT_EXT` set in `lib/reverse-engineer.js`.
+- **Model & tuning** — `medium` effort; the model itself is shared by every AI pass
+  (see **Models** below). Request timeout `WIZARD_IMPORT_TIMEOUT_MS` (default 10
+  min). Corpus size cap: `WIZARD_CORPUS_CHARS`. File-type coverage: the `TEXT_EXT`
+  set in `lib/reverse-engineer.js`.
 
 Drafted projects carry a `draftFromCode` flag and show a "review and correct"
 banner in the wizard.
@@ -323,6 +325,29 @@ doc set — and optionally stands up its tracker:
 The generated bundle is just files, so you can also point a **Claude Code
 session** at the docs folder afterward (via the `AI-HANDOFF.md` prompt) to
 iterate further — the wizard gives the rich starting point, the session refines.
+
+## Models (`lib/claude-model.js`)
+
+Every AI pass — the import assessment (`reverse-engineer.js`), Stage-3 enrichment
+and the build-plan agent (`enrich.js`), and Assess Changes (`assess.js`) — runs on
+**`claude-fable-5`** and falls back to **`claude-opus-5`**.
+
+- **When it falls back** — a policy refusal (`stop_reason: "refusal"`, surfaced
+  internally as 422), the model not being served to the key (400/403/404), or
+  sustained capacity errors (429/5xx) after the in-model retries. It deliberately
+  does **not** fall back on a timeout (the wait is already spent — re-running would
+  double it) or a bad key.
+- **Pinning** — 400/403/404 means the key can't use the model at all, so the first
+  such failure pins the process to the fallback and logs `[model] … for the rest of
+  this process`. Without that, an org on zero data retention (Fable 5 requires
+  30-day retention and 400s under ZDR) would burn one doomed request on each of the
+  ~50 turns of a plan run.
+- **Overrides** — `WIZARD_MODEL` and `WIZARD_FALLBACK_MODEL`. Setting both to the
+  same id disables the fallback (the chain collapses to one attempt).
+  `ENRICH_RETRIES` bounds the per-model backoff retries before a capacity failure
+  reaches the fallback — `0` genuinely means none (it used to silently mean 4).
+- **Constraint** — Fable 5 always thinks and rejects any explicit `thinking` config,
+  so no request may send one; depth is steered by `output_config.effort` alone.
 
 ## Reference uploads (the "Reference" wizard step)
 

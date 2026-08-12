@@ -1093,7 +1093,8 @@ function makeBundleEditable(stage) {
   try { fs.mkdirSync(libDst, { recursive: true }); } catch (e) {}
   // governance-gate is required by linear.js + enrich.js — omitting it made pods
   // crash on boot with MODULE_NOT_FOUND once that dependency was introduced.
-  for (const m of ['docs-editor', 'assess', 'linear', 'render-intake', 'reverse-engineer', 'enrich', 'governance-gate', 'auth', 'github-corpus']) {
+  // claude-model is required at load time by assess/enrich/reverse-engineer.
+  for (const m of ['docs-editor', 'assess', 'linear', 'render-intake', 'reverse-engineer', 'enrich', 'governance-gate', 'auth', 'github-corpus', 'claude-model']) {
     try { fs.copyFileSync(path.join(__dirname, 'lib', m + '.js'), path.join(libDst, m + '.js')); }
     catch (e) { console.error('makeBundleEditable: could not ship lib/' + m + '.js:', e.message); }
   }
@@ -1342,6 +1343,7 @@ app.get('/api/config', (req, res) => {
     proxyUrl: process.env.PROXY_URL || (ip ? `http://${ip}:8080/dashboard/` : null),
     aiServerKey: reverse.serverKeyConfigured(),   // a server-side ANTHROPIC_API_KEY is set (GUI can also supply one)
     aiModel: reverse.MODEL,
+    aiFallbackModel: reverse.FALLBACK_MODEL,   // used if the primary refuses or isn't served to this org
     houseDefaults: houseDefaults(),   // org standard stack; seeds new-project decisions + wizard hints
     entraLookup: entraGraph.enabled(),   // Stakeholders step can search the Entra directory
   });
