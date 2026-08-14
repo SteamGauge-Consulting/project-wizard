@@ -37,8 +37,68 @@ fi
 # 3. Shared proxy network ----------------------------------------------------
 $DOCKER network inspect web >/dev/null 2>&1 || $DOCKER network create web
 
-# 4. Traefik reverse proxy ---------------------------------------------------
+# 4. TLS — a private CA + one wildcard leaf ---------------------------------
+#    nip.io hostnames can't get a public cert (no DNS control, RFC1918 target),
+#    so the LAN runs its own CA. The leaf's *.<HOST_IP>.nip.io SAN covers every
+#    pod the wizard will ever deploy, so adding a project needs no cert work —
+#    Traefik serves this as the default certificate for all hosts on :443.
+#    Trust ~/apps/proxy/certs/ca.crt once per client machine to lose the
+#    browser warning (see the note this script prints at the end).
+mkdir -p ~/apps/proxy/certs ~/apps/proxy/dynamic
+if [ ! -f ~/apps/proxy/certs/ca.key ]; then
+  echo "→ generating LAN certificate authority…"
+  openssl genrsa -out ~/apps/proxy/certs/ca.key 2048 2>/dev/null
+  openssl req -x509 -new -nodes -sha256 -days 3650 \
+    -key ~/apps/proxy/certs/ca.key -out ~/apps/proxy/certs/ca.crt \
+    -subj "/CN=Project Wizard Lab CA/O=Project Wizard" \
+    -addext "basicConstraints=critical,CA:TRUE,pathlen:0" \
+    -addext "keyUsage=critical,keyCertSign,cRLSign" 2>/dev/null
+fi
+# Leaf is reissued on every run (825 days — the max a browser accepts).
+cat > ~/apps/proxy/certs/leaf.ext <<EXT
+basicConstraints=critical,CA:FALSE
+keyUsage=critical,digitalSignature,keyEncipherment
+extendedKeyUsage=serverAuth
+subjectKeyIdentifier=hash
+authorityKeyIdentifier=keyid,issuer
+subjectAltName=@alt
+
+[alt]
+DNS.1=${HOST_IP}.nip.io
+DNS.2=*.${HOST_IP}.nip.io
+DNS.3=localhost
+IP.1=${HOST_IP}
+IP.2=127.0.0.1
+EXT
+openssl genrsa -out ~/apps/proxy/certs/lan.key 2048 2>/dev/null
+openssl req -new -key ~/apps/proxy/certs/lan.key -out ~/apps/proxy/certs/lan.csr \
+  -subj "/CN=${HOST_IP}.nip.io/O=Project Wizard" 2>/dev/null
+openssl x509 -req -in ~/apps/proxy/certs/lan.csr \
+  -CA ~/apps/proxy/certs/ca.crt -CAkey ~/apps/proxy/certs/ca.key -CAcreateserial \
+  -out ~/apps/proxy/certs/lan.crt -days 825 -sha256 \
+  -extfile ~/apps/proxy/certs/leaf.ext 2>/dev/null
+rm -f ~/apps/proxy/certs/lan.csr
+chmod 644 ~/apps/proxy/certs/*.crt
+chmod 640 ~/apps/proxy/certs/*.key
+
+cat > ~/apps/proxy/dynamic/tls.yml <<'YML'
+# The default certificate is served for every Host on the websecure
+# entrypoint, so a newly deployed pod is valid over HTTPS immediately.
+tls:
+  stores:
+    default:
+      defaultCertificate:
+        certFile: /etc/traefik/certs/lan.crt
+        keyFile: /etc/traefik/certs/lan.key
+  certificates:
+    - certFile: /etc/traefik/certs/lan.crt
+      keyFile: /etc/traefik/certs/lan.key
+YML
+
+# 4a. Traefik reverse proxy --------------------------------------------------
 #    Routes by hostname via nip.io, so apps get clean URLs with no DNS setup.
+#    Serves both :80 and :443; HTTP is left working rather than redirected, so
+#    the wizard↔pod callbacks (which POST over http://) keep their 2xx.
 mkdir -p ~/apps/proxy
 cat > ~/apps/proxy/docker-compose.yml <<'YML'
 services:
@@ -51,13 +111,23 @@ services:
     command:
       - --providers.docker=true
       - --providers.docker.exposedbydefault=false
+      # File provider carries the TLS store (certs/ + dynamic/tls.yml).
+      - --providers.file.directory=/etc/traefik/dynamic
+      - --providers.file.watch=true
       - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      # Every router on websecure terminates TLS with the default cert, so a
+      # pod only needs `entrypoints=web,websecure` — no per-router tls labels.
+      - --entrypoints.websecure.http.tls=true
       - --api.dashboard=true
       - --api.insecure=true        # LAN dashboard on :8080, no auth
     ports:
       - "80:80"
+      - "443:443"
       - "8080:8080"
     volumes:
+      - ./certs:/etc/traefik/certs:ro
+      - ./dynamic:/etc/traefik/dynamic:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks: [web]
 networks:
@@ -92,7 +162,7 @@ services:
       - traefik.enable=true
       - traefik.docker.network=web
       - traefik.http.routers.portainer.rule=Host(\`portainer.${HOST_IP}.nip.io\`)
-      - traefik.http.routers.portainer.entrypoints=web
+      - traefik.http.routers.portainer.entrypoints=web,websecure
       - traefik.http.services.portainer.loadbalancer.server.port=9000
 networks:
   web:
@@ -116,7 +186,7 @@ services:
       - traefik.enable=true
       - traefik.docker.network=web
       - traefik.http.routers.wizard.rule=Host(\`${WIZARD_HOST}\`)
-      - traefik.http.routers.wizard.entrypoints=web
+      - traefik.http.routers.wizard.entrypoints=web,websecure
       - traefik.http.services.wizard.loadbalancer.server.port=4500
 networks:
   web:
@@ -126,11 +196,18 @@ $DOCKER compose up -d --build
 
 echo
 echo "✓ Done."
-echo "  Project Wizard:     http://${WIZARD_HOST}/"
-echo "  Portainer:          http://portainer.${HOST_IP}.nip.io/"
+echo "  Project Wizard:     https://${WIZARD_HOST}/   (http:// also works)"
+echo "  Portainer:          https://portainer.${HOST_IP}.nip.io/"
 echo "     login: admin / $(cat ~/apps/portainer/admin-password)"
 echo "     (seeded on first run — change it in Portainer › My account)"
 echo "  Traefik dashboard:  http://${HOST_IP}:8080/dashboard/"
 echo
 echo "Users open the wizard, build a project, then Export → Deploy to Docker"
 echo "with host ${HOST_IP} (this box) to spin it up at <name>.${HOST_IP}.nip.io."
+echo
+echo "HTTPS uses a private CA, so browsers warn until it's trusted. Copy"
+echo "  ~/apps/proxy/certs/ca.crt"
+echo "to each client machine and trust it once — it covers every pod, since the"
+echo "cert carries a *.${HOST_IP}.nip.io wildcard. On macOS:"
+echo "  sudo security add-trusted-cert -d -r trustRoot \\"
+echo "    -k /Library/Keychains/System.keychain ca.crt"
