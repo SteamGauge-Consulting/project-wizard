@@ -25,12 +25,12 @@ services:
       - traefik.docker.network=web
       # Public host (Cloudflare). Also set AUTH_PUBLIC_URL=https://<this host> in .env.
       - traefik.http.routers.wizard.rule=Host(`${WIZARD_PUBLIC_HOST}`)
-      - traefik.http.routers.wizard.entrypoints=web
+      - traefik.http.routers.wizard.entrypoints=web,websecure
       - traefik.http.routers.wizard.service=wizard
       # LAN host (nip.io) — remove this router if you only want the public host,
       # or leave WIZARD_LAN_HOST unset and delete these three lines.
       - traefik.http.routers.wizard-lan.rule=Host(`${WIZARD_LAN_HOST}`)
-      - traefik.http.routers.wizard-lan.entrypoints=web
+      - traefik.http.routers.wizard-lan.entrypoints=web,websecure
       - traefik.http.routers.wizard-lan.service=wizard
       - traefik.http.services.wizard.loadbalancer.server.port=4500
 networks:
