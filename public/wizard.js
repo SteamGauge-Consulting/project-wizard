@@ -239,10 +239,12 @@
     }
 
     function renderReference() {
-      var maxBytes = 64 * 1024 * 1024;
+      // Server-declared cap (GET /attachments → maxBytes) — refresh() below
+      // corrects the copy, so this is only the first-paint placeholder.
+      var maxBytes = 512 * 1024 * 1024;
       bodyEl.innerHTML =
         '<div class="step on"><h2>Reference material</h2>' +
-        '<p class="stephint">Optional. Attach existing material the agent should read <b>alongside</b> your requirements — a PDF spec, design notes, or a <b>zip of an existing codebase</b> to reuse as a pattern. These are reference, not scope: the agent mines them for context but still builds only what the requirements describe, and the “won’t build” list still wins. Documents (pdf, md, txt, docx, csv, json, images…) and code/archives (zip, tar, common source files) up to ' + fmtBytes(maxBytes) + ' each.</p>' +
+        '<p class="stephint">Optional. Attach existing material the agent should read <b>alongside</b> your requirements — a PDF spec, design notes, or a <b>zip of an existing codebase</b> to reuse as a pattern. These are reference, not scope: the agent mines them for context but still builds only what the requirements describe, and the “won’t build” list still wins. Documents (pdf, md, txt, docx, csv, json, images…) and code/archives (zip, tar, common source files) up to <b id="att-max">' + fmtBytes(maxBytes) + '</b> each.</p>' +
         '<div class="dropzone" id="dz"><input type="file" id="fileinput" multiple hidden />' +
         '<div class="dz-inner"><div class="dz-icon">⬆</div><div>Drop files here, or <span class="dz-link">browse</span></div>' +
         '<div class="hint" id="dz-hint">PDFs, docs, or a codebase .zip</div></div></div>' +
@@ -276,7 +278,13 @@
       function refresh() {
         fetch('/api/projects/' + project.id + '/attachments')
           .then(function (r) { return r.json(); })
-          .then(function (j) { if (j.maxBytes) maxBytes = j.maxBytes; drawList(j.attachments || []); })
+          .then(function (j) {
+            if (j.maxBytes) {
+              maxBytes = j.maxBytes;
+              var m = bodyEl.querySelector('#att-max'); if (m) m.textContent = fmtBytes(maxBytes);
+            }
+            drawList(j.attachments || []);
+          })
           .catch(function () { drawList([]); });
       }
 

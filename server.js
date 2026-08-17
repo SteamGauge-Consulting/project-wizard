@@ -64,7 +64,14 @@ function houseDefaults() {
 }
 seedHouseDefaults();
 
-app.use(express.json({ limit: '2mb' }));
+// The attachment upload POSTs a raw File as the body and streams it to disk in
+// its own route — the JSON parser must not swallow it. (A .json file arrives as
+// content-type: application/json, which express.json would otherwise consume
+// and cap at 2mb, so the route would see a parsed object and reject it as an
+// empty file.)
+const jsonBody = express.json({ limit: '2mb' });
+const isAttachUpload = (req) => req.method === 'POST' && /^\/api\/projects\/[^/]+\/attachments\/?$/.test(req.path);
+app.use((req, res, next) => (isAttachUpload(req) ? next() : jsonBody(req, res, next)));
 
 // Entra SSO gate (no-op unless AUTH_MODE=entra). Registered BEFORE static + the
 // API so the whole wizard is protected; /auth/*, /healthz, /api/agent/* (own
@@ -224,7 +231,10 @@ function handoffOf(p) {
 // Uploaded supporting files (docs + codebase archives) the agent reads alongside
 // the intake. Stored under data/attachments/<id>/; copied into the generated
 // tree's reference/ folder so they ride along in every export.
-const MAX_ATTACH_BYTES = 64 * 1024 * 1024;          // per file
+// Per-file cap. Generous because a real codebase zip runs into the hundreds of
+// MB and the upload is STREAMED to disk (never buffered), so size costs disk,
+// not memory. Override with ATTACH_MAX_MB when the data volume is tight.
+const MAX_ATTACH_BYTES = Math.max(1, Number(process.env.ATTACH_MAX_MB) || 512) * 1024 * 1024;
 const DOC_EXT  = ['pdf','txt','md','markdown','rst','doc','docx','odt','rtf','csv','tsv','json','yaml','yml','toml','xml','html','htm','png','jpg','jpeg','gif','svg','webp'];
 const CODE_EXT = ['zip','tar','tgz','gz','bz2','7z','js','mjs','cjs','ts','tsx','jsx','py','rb','go','rs','java','kt','c','h','cpp','hpp','cs','php','swift','sql','sh','ipynb'];
 const ALLOWED_EXT = new Set([...DOC_EXT, ...CODE_EXT]);
@@ -465,42 +475,95 @@ app.get('/api/projects/:id/attachments', (req, res) => {
   res.json({ attachments: atts, maxBytes: MAX_ATTACH_BYTES, totalBytes: atts.reduce((n, a) => n + a.size, 0) });
 });
 
-// Raw-body upload — one file per request. ?name= = a single reference doc
-// (type allow-listed, flat). ?path= = a file within a folder/codebase upload
-// (relative path preserved, lenient — the corpus builder filters by type later).
-// Dependency-light: the browser POSTs the File as the body, no multipart parser.
-app.post('/api/projects/:id/attachments',
-  express.raw({ type: () => true, limit: MAX_ATTACH_BYTES }),
-  (req, res) => {
-    const p = storage.getProject(req.params.id);
-    if (!p) return res.status(404).json({ error: 'not found' });
-    const usePath = typeof req.query.path === 'string' && req.query.path.length > 0;
-    const rel = usePath ? safeRelPath(req.query.path) : safeFileName(req.query.name);
-    if (!rel) return res.status(400).json({ error: 'a valid filename is required' });
-    if (!usePath && !ALLOWED_EXT.has(extOf(rel))) {
-      return res.status(415).json({ error: 'unsupported file type “.' + (extOf(rel) || '?') + '”. Allowed: documents (pdf, md, txt, docx, csv, json, images…) and code/archives (zip, tar, and common source files).' });
-    }
-    const buf = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
-    if (!buf.length) return res.status(400).json({ error: 'empty file' });
+function tooLargeError(n) {
+  return 'file is too large' + (n ? ' (' + fmtBytes(n) + ')' : '') + ' — max ' + fmtBytes(MAX_ATTACH_BYTES) + ' per file';
+}
 
-    const dir = storage.attachmentsDir(p.id);
-    const full = path.join(dir, rel);
-    if (!path.resolve(full).startsWith(path.resolve(dir) + path.sep)) return res.status(400).json({ error: 'bad path' });
-    fs.mkdirSync(path.dirname(full), { recursive: true });
-    const tmp = path.join(dir, '.' + crypto.randomBytes(4).toString('hex') + '.tmp');
+// Coalesced attachment bookkeeping. A folder/codebase upload arrives as ONE
+// REQUEST PER FILE, and re-walking the tree + re-mirroring reference/ on each
+// one is O(n²) — a few thousand files would spend minutes copying. Trailing
+// debounce instead: only the last request of a burst does the real sync. The
+// listing endpoint reads disk, so the UI stays accurate meanwhile; p.attachments
+// (read by the agent API) lands a beat later.
+const ATTACH_SYNC_MS = 1200;
+const attachSyncTimers = new Map();
+function syncAttachmentsSoon(id) {
+  clearTimeout(attachSyncTimers.get(id));
+  attachSyncTimers.set(id, setTimeout(() => {
+    attachSyncTimers.delete(id);
     try {
-      fs.writeFileSync(tmp, buf);
-      fs.renameSync(tmp, full);
-    } catch (e) {
-      try { fs.rmSync(tmp, { force: true }); } catch {}
-      return res.status(500).json({ error: 'could not store file' });
-    }
+      const p = storage.getProject(id);
+      if (!p) return;
+      p.attachments = listAttachments(p);
+      storage.saveProject(p);
+      writeAux(p, storage.generatedDir(p.id));
+    } catch (e) { console.error('attachment sync failed (non-fatal):', e.message); }
+  }, ATTACH_SYNC_MS));
+}
 
+// Raw-body upload — one file per request, STREAMED straight to disk so a
+// multi-hundred-MB codebase zip costs disk, not server memory. ?name= = a single
+// reference doc (type allow-listed, flat). ?path= = a file within a
+// folder/codebase upload (relative path preserved, lenient — the corpus builder
+// filters by type later).
+// Dependency-light: the browser POSTs the File as the body, no multipart parser.
+app.post('/api/projects/:id/attachments', (req, res) => {
+  const p = storage.getProject(req.params.id);
+  if (!p) return res.status(404).json({ error: 'not found' });
+  const usePath = typeof req.query.path === 'string' && req.query.path.length > 0;
+  const rel = usePath ? safeRelPath(req.query.path) : safeFileName(req.query.name);
+  if (!rel) return res.status(400).json({ error: 'a valid filename is required' });
+  if (!usePath && !ALLOWED_EXT.has(extOf(rel))) {
+    return res.status(415).json({ error: 'unsupported file type “.' + (extOf(rel) || '?') + '”. Allowed: documents (pdf, md, txt, docx, csv, json, images…) and code/archives (zip, tar, and common source files).' });
+  }
+
+  const dir = storage.attachmentsDir(p.id);
+  const full = path.join(dir, rel);
+  if (!path.resolve(full).startsWith(path.resolve(dir) + path.sep)) return res.status(400).json({ error: 'bad path' });
+
+  // Reject on the DECLARED size first, so an oversized file is refused before
+  // the browser pushes hundreds of MB over the wire.
+  const declared = Number(req.headers['content-length'] || 0);
+  if (declared > MAX_ATTACH_BYTES) return res.status(413).json({ error: tooLargeError(declared) });
+
+  try { fs.mkdirSync(path.dirname(full), { recursive: true }); }
+  catch (e) { return res.status(500).json({ error: 'could not store file' }); }
+
+  const tmp = path.join(dir, '.' + crypto.randomBytes(4).toString('hex') + '.tmp');
+  const ws = fs.createWriteStream(tmp);
+  let bytes = 0, settled = false;
+  const cleanup = () => { try { fs.rmSync(tmp, { force: true }); } catch {} };
+  const fail = (status, error) => {
+    if (settled) return; settled = true;
+    req.unpipe(ws);
+    ws.destroy();
+    cleanup();
+    if (!res.headersSent) res.status(status).json({ error });
+    req.resume();                                   // drain the rest; keep the socket usable
+  };
+
+  // Backstop for a body that lies about (or omits) content-length.
+  req.on('data', (c) => { bytes += c.length; if (bytes > MAX_ATTACH_BYTES) fail(413, tooLargeError(bytes)); });
+  req.on('aborted', () => fail(400, 'upload was interrupted'));
+  req.on('error', () => fail(400, 'upload failed'));
+  ws.on('error', () => fail(500, 'could not store file'));
+  ws.on('finish', () => {
+    if (settled) return; settled = true;
+    if (!bytes) { cleanup(); return res.status(400).json({ error: 'empty file' }); }
+    try { fs.renameSync(tmp, full); }
+    catch (e) { cleanup(); return res.status(500).json({ error: 'could not store file' }); }
+    const attachment = { name: rel, size: bytes, kind: kindOf(rel) };
+    if (usePath) {                                  // folder/codebase burst — coalesce the sync
+      syncAttachmentsSoon(p.id);
+      return res.status(201).json({ ok: true, attachment });
+    }
     p.attachments = listAttachments(p);
     storage.saveProject(p);
     writeAux(p, storage.generatedDir(p.id));        // keep an already-generated tree in sync
-    res.status(201).json({ ok: true, attachment: { name: rel, size: buf.length, kind: kindOf(rel) }, count: p.attachments.length });
+    res.status(201).json({ ok: true, attachment, count: p.attachments.length });
   });
+  req.pipe(ws);
+});
 
 // Delete one file (?name=<relative path>) or clear all (no name).
 app.delete('/api/projects/:id/attachments', (req, res) => {
@@ -1344,6 +1407,7 @@ app.get('/api/config', (req, res) => {
     aiServerKey: reverse.serverKeyConfigured(),   // a server-side ANTHROPIC_API_KEY is set (GUI can also supply one)
     aiModel: reverse.MODEL,
     aiFallbackModel: reverse.FALLBACK_MODEL,   // used if the primary refuses or isn't served to this org
+    maxAttachBytes: MAX_ATTACH_BYTES,   // per-file upload cap, so the UI can pre-check and say so
     houseDefaults: houseDefaults(),   // org standard stack; seeds new-project decisions + wizard hints
     entraLookup: entraGraph.enabled(),   // Stakeholders step can search the Entra directory
   });
@@ -1471,12 +1535,12 @@ agentApi.mount(app, {
 
 app.get('/healthz', (req, res) => res.json({ ok: true }));
 
-// JSON error handler — so an oversized upload (express.raw 413) and friends come
-// back as JSON the client can read, not Express's default HTML error page.
+// JSON error handler — so an oversized body (413) and friends come back as JSON
+// the client can read, not Express's default HTML error page.
 app.use((err, req, res, next) => {
   if (res.headersSent) return next(err);
   const tooBig = err && (err.type === 'entity.too.large' || err.status === 413);
-  if (tooBig) return res.status(413).json({ error: 'file is too large (max ' + fmtBytes(MAX_ATTACH_BYTES) + ' per file)' });
+  if (tooBig) return res.status(413).json({ error: tooLargeError(0) });
   res.status(err.status || 500).json({ error: String((err && err.message) || 'server error') });
 });
 

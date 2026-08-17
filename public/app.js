@@ -309,10 +309,12 @@
           '<input type="file" id="fi-files" multiple hidden />' +
           '<input type="file" id="fi-dir" webkitdirectory directory multiple hidden />' +
           '<div class="dz-inner"><div class="dz-icon">⬆</div>' +
-          '<div>Drop files here, or <span class="dz-link" id="pick-files">choose files</span> · <span class="dz-link" id="pick-dir">choose a folder</span></div>' +
-          '<div class="hint">Source files, a project folder, or a <code>.zip</code> — node_modules / .git are skipped automatically</div></div>' +
+          '<div>Drop files <b>or a whole folder</b> here, or <span class="dz-link" id="pick-files">choose files</span> · <span class="dz-link" id="pick-dir">choose a folder</span></div>' +
+          '<div class="hint">Source files, a project folder, or a <code>.zip</code> — up to <b id="up-max">…</b> per file. node_modules / .git / build output are skipped before upload.</div>' +
+          '<div class="hint">Using the folder picker? <b>Single-click</b> the folder (double-clicking opens it) and press <b>Upload</b> — or just drag the folder onto this box.</div></div>' +
         '</div>' +
         '<div id="up-status" class="hint" aria-live="polite"></div>' +
+        '<div id="up-errors"></div>' +
         '<div id="up-summary"></div>' +
 
         '<label style="margin-top:20px">Claude API key' + (cfg.aiServerKey ? ' <span style="text-transform:none;letter-spacing:0">(optional — a server key is configured)</span>' : '') + '</label>' +
@@ -334,7 +336,12 @@
       var fiFiles = app.querySelector('#fi-files');
       var fiDir = app.querySelector('#fi-dir');
       var statusEl = app.querySelector('#up-status');
+      var errorsEl = app.querySelector('#up-errors');
       var summaryEl = app.querySelector('#up-summary');
+      var maxEl = app.querySelector('#up-max');
+      var maxBytes = Number(cfg.maxAttachBytes) || 512 * 1024 * 1024;
+      function showMax() { if (maxEl) maxEl.textContent = fmtBytes(maxBytes); }
+      showMax();
 
       function drawSummary(atts) {
         if (!atts || !atts.length) { summaryEl.innerHTML = ''; return; }
@@ -351,36 +358,133 @@
       }
       function refresh() {
         fetch('/api/projects/' + id + '/attachments').then(function (r) { return r.json(); })
-          .then(function (j) { drawSummary(j.attachments || []); }).catch(function () {});
+          .then(function (j) { if (j.maxBytes) { maxBytes = j.maxBytes; showMax(); } drawSummary(j.attachments || []); }).catch(function () {});
       }
-      function uploadOne(file) {
-        var rel = (file.webkitRelativePath && file.webkitRelativePath.length) ? file.webkitRelativePath : file.name;
-        return fetch('/api/projects/' + id + '/attachments?path=' + encodeURIComponent(rel), {
-          method: 'POST', headers: { 'content-type': file.type || 'application/octet-stream' }, body: file,
-        }).then(function (r) { return r.ok ? null : r.json().then(function (j) { return { name: rel, error: (j && j.error) || 'failed' }; }); })
-          .catch(function () { return { name: rel, error: 'upload failed' }; });
+
+      // Mirrors SKIP_DIR in lib/reverse-engineer.js — filtered HERE so a folder
+      // upload doesn't push tens of thousands of dependency/build files over the
+      // wire just for the corpus builder to ignore them on the other side.
+      var SKIP_DIRS = ('node_modules .git dist build .next .nuxt out vendor venv .venv env __pycache__ ' +
+        '.cache coverage .svelte-kit target .idea .vscode .terraform tmp .turbo .manus __MACOSX').split(' ');
+      function skipSeg(name) { return SKIP_DIRS.indexOf(name) !== -1; }
+      function skipDirPath(rel) { return rel.split('/').some(skipSeg); }      // rel = a DIRECTORY path
+      function skipFilePath(rel) {                                            // rel = a FILE path
+        var segs = rel.split('/'), base = segs.pop();
+        if (base === '.DS_Store' || base === 'Thumbs.db' || base.indexOf('._') === 0) return true;
+        return segs.some(skipSeg);
       }
-      function handleFiles(list) {
-        var files = Array.prototype.slice.call(list || []);
-        if (!files.length) return;
-        statusEl.textContent = 'uploading ' + files.length + ' file' + (files.length === 1 ? '' : 's') + '…';
-        var errors = [], i = 0;
-        (function next() {
-          if (i >= files.length) {
-            statusEl.textContent = errors.length ? ('uploaded with ' + errors.length + ' skipped') : ('uploaded ' + files.length + ' file' + (files.length === 1 ? '' : 's') + ' ✓');
-            refresh(); return;
+
+      function uploadOne(it) {
+        return fetch('/api/projects/' + id + '/attachments?path=' + encodeURIComponent(it.rel), {
+          method: 'POST', headers: { 'content-type': it.file.type || 'application/octet-stream' }, body: it.file,
+        }).then(function (r) {
+          if (r.ok) return null;
+          return r.json().then(function (j) { return { name: it.rel, error: (j && j.error) || ('failed — HTTP ' + r.status) }; })
+            .catch(function () { return { name: it.rel, error: 'failed — HTTP ' + r.status }; });
+        }).catch(function () { return { name: it.rel, error: 'upload failed — the connection dropped' }; });
+      }
+
+      // One request per file, a few at a time: a folder upload is thousands of
+      // small POSTs, and strictly serial is needlessly slow.
+      var UP_CONCURRENCY = 4;
+      function handleItems(items) {
+        items = (items || []).filter(function (it) { return it && it.file; });
+        errorsEl.innerHTML = '';
+        if (!items.length) { statusEl.textContent = 'nothing to upload'; return; }
+        var junk = 0, tooBig = [], failed = [], queue = [];
+        items.forEach(function (it) {
+          if (skipFilePath(it.rel)) { junk++; return; }
+          if (!it.file.size) { junk++; return; }                    // empty file (or a folder the browser handed us as one)
+          if (it.file.size > maxBytes) {
+            tooBig.push({ name: it.rel, error: 'too large (' + fmtBytes(it.file.size) + ') — the limit is ' + fmtBytes(maxBytes) + ' per file' });
+            return;
           }
-          uploadOne(files[i++]).then(function (e) { if (e) errors.push(e); next(); });
+          queue.push(it);
+        });
+        var total = queue.length, done = 0;
+        function tick() { statusEl.textContent = 'uploading ' + done + '/' + total + ' file' + (total === 1 ? '' : 's') + '…'; }
+        function report() {
+          var errors = tooBig.concat(failed);
+          var ok = total - failed.length;
+          var parts = [ok > 0 ? ('uploaded ' + ok + ' file' + (ok === 1 ? '' : 's') + ' ✓') : 'nothing uploaded'];
+          if (junk) parts.push('skipped ' + junk + ' dependency/build file' + (junk === 1 ? '' : 's'));
+          if (errors.length) parts.push(errors.length + ' couldn’t be added');
+          statusEl.textContent = parts.join(' · ');
+          errorsEl.innerHTML = errors.length
+            ? '<div class="warn" style="margin-top:10px"><b>Couldn’t add ' + errors.length + ' file' + (errors.length === 1 ? '' : 's') + ':</b>' +
+              '<ul class="up-list">' + errors.slice(0, 6).map(function (e) { return '<li>' + esc(e.name) + ' — ' + esc(e.error) + '</li>'; }).join('') +
+              (errors.length > 6 ? '<li class="dim">…and ' + (errors.length - 6) + ' more</li>' : '') + '</ul></div>'
+            : '';
+          refresh();
+        }
+        if (!total) { report(); return; }
+        tick();
+        var next = 0, running = 0, finished = false;
+        (function pump() {
+          while (running < UP_CONCURRENCY && next < total) {
+            running++;
+            uploadOne(queue[next++]).then(function (e) {
+              running--; done++;
+              if (e) failed.push(e);
+              if (done === total) { if (!finished) { finished = true; report(); } return; }
+              if (done % 20 === 0) tick();
+              pump();
+            });
+          }
         })();
       }
+
+      function itemsFromList(list) {
+        return Array.prototype.slice.call(list || []).map(function (f) {
+          return { file: f, rel: (f.webkitRelativePath && f.webkitRelativePath.length) ? f.webkitRelativePath : f.name };
+        });
+      }
+
+      // A dropped FOLDER arrives as a directory entry, not files — walk it, so
+      // dragging a project tree in works (no folder-picker drill-down needed).
+      // webkitGetAsEntry() must be called synchronously inside the drop event.
+      function itemsFromDrop(dt) {
+        var roots = [];
+        var list = dt.items ? Array.prototype.slice.call(dt.items) : [];
+        for (var i = 0; i < list.length; i++) {
+          var e = list[i].webkitGetAsEntry ? list[i].webkitGetAsEntry() : null;
+          if (e) roots.push(e);
+        }
+        if (!roots.length) return Promise.resolve(itemsFromList(dt.files));
+        var out = [];
+        function walk(entry, rel) {
+          if (entry.isFile) {
+            return new Promise(function (resolve) {
+              entry.file(function (f) { out.push({ file: f, rel: rel }); resolve(); }, function () { resolve(); });
+            });
+          }
+          if (!entry.isDirectory || skipDirPath(rel)) return Promise.resolve();
+          var reader = entry.createReader();
+          return new Promise(function (resolve) {
+            (function batch() {                                   // readEntries yields ~100 at a time
+              reader.readEntries(function (kids) {
+                if (!kids.length) { resolve(); return; }
+                Promise.all(kids.map(function (k) { return walk(k, rel + '/' + k.name); })).then(batch, resolve);
+              }, function () { resolve(); });
+            })();
+          });
+        }
+        return Promise.all(roots.map(function (e) { return walk(e, e.name); })).then(function () { return out; });
+      }
+
       app.querySelector('#pick-files').addEventListener('click', function (e) { e.stopPropagation(); fiFiles.click(); });
       app.querySelector('#pick-dir').addEventListener('click', function (e) { e.stopPropagation(); fiDir.click(); });
       dz.addEventListener('click', function () { fiFiles.click(); });
-      fiFiles.addEventListener('change', function () { handleFiles(fiFiles.files); fiFiles.value = ''; });
-      fiDir.addEventListener('change', function () { handleFiles(fiDir.files); fiDir.value = ''; });
+      fiFiles.addEventListener('change', function () { handleItems(itemsFromList(fiFiles.files)); fiFiles.value = ''; });
+      fiDir.addEventListener('change', function () { handleItems(itemsFromList(fiDir.files)); fiDir.value = ''; });
       ['dragenter', 'dragover'].forEach(function (ev) { dz.addEventListener(ev, function (e) { e.preventDefault(); dz.classList.add('drag'); }); });
       ['dragleave', 'drop'].forEach(function (ev) { dz.addEventListener(ev, function (e) { e.preventDefault(); if (ev === 'dragleave' && dz.contains(e.relatedTarget)) return; dz.classList.remove('drag'); }); });
-      dz.addEventListener('drop', function (e) { if (e.dataTransfer && e.dataTransfer.files) handleFiles(e.dataTransfer.files); });
+      dz.addEventListener('drop', function (e) {
+        if (!e.dataTransfer) return;
+        statusEl.textContent = 'reading…';
+        errorsEl.innerHTML = '';
+        itemsFromDrop(e.dataTransfer).then(handleItems, function () { statusEl.textContent = '✗ could not read what was dropped'; });
+      });
 
       // Generate draft
       var genStatus = app.querySelector('#gen-status');
